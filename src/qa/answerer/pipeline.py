@@ -14,15 +14,13 @@ answerer ─ 問答主流程（Orchestrator）
 """
 
 from __future__ import annotations
-
-import argparse
-import os
-import re
-import sys
-from pathlib import Path
-
-from .core.embedding import load_embedder, embed_triple, embed_text, dedupe
-# ──────────────────────── 本專案自製模組 ────────────────────────
+from ..tools import kg_nl as knl
+from ..tools import data_utils as du
+from .llm.prompt_loader import load_prompt
+from .llm.gpt import GPTClient
+from .kg.search import search_by_triples
+from .kg.loader import load_kg_vectors, load_kg_df
+from .core.utils import safe_json_loads, clean_json_block
 from .core.paths import (
     CKIP_ROOT,
     KG_EMB_PATH,
@@ -32,14 +30,19 @@ from .core.paths import (
     EXTRACT_PROMPT_PATH,
     JUDGE_PROMPT_PATH,
 )
-from .core.utils import safe_json_loads, clean_json_block
-from .kg.loader import load_kg_vectors, load_kg_df
-from .kg.search import search_by_triples
-from .llm.gpt import GPTClient
-from .llm.prompt_loader import load_prompt
-from ..tools import data_utils as du
+from .core.embedding import load_embedder, embed_triple, embed_text, dedupe
+
+import argparse
+import os
+import re
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
+load_dotenv()
+
+# ──────────────────────── 本專案自製模組 ────────────────────────
 # 需用到 qa.tools 生成敘述區塊
-from ..tools import kg_nl as knl
 
 # ───────────────────────────── 參數設定 ─────────────────────────
 SIM_TH: float = 0.80  # KG 相似度門檻
@@ -47,8 +50,10 @@ TOP_K: int = 100  # 每個三元組取前 TOP_K 條
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Answerer pipeline: 指定問題檔案 <id>.txt")
-    parser.add_argument("input_file", help="Path or filename of question file, e.g. '2024-...txt'")
+    parser = argparse.ArgumentParser(
+        description="Answerer pipeline: 指定問題檔案 <id>.txt")
+    parser.add_argument(
+        "input_file", help="Path or filename of question file, e.g. '2024-...txt'")
     args = parser.parse_args()
 
     # 讀取問題檔案
@@ -101,7 +106,8 @@ def main() -> None:
 
     if isinstance(data, dict) and "triples" in data:
         triples = [
-            {"head": t["subject"], "relation": t["relation"], "tail": t["object"]}
+            {"head": t["subject"], "relation": t["relation"],
+                "tail": t["object"]}
             for t in data["triples"]
             if t.get("subject") and t.get("relation")
         ]
@@ -148,7 +154,8 @@ def main() -> None:
     )
 
     # 6. GPT 最終判斷
-    judge_result = gpt.chat(judge_prompt, kg_out.read_text(encoding="utf-8-sig"))
+    judge_result = gpt.chat(
+        judge_prompt, kg_out.read_text(encoding="utf-8-sig"))
     # 移除所有反引號、井號與星號
     judge_result = (judge_result
                     .replace("`", "")
