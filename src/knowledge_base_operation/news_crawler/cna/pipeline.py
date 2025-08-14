@@ -29,21 +29,28 @@ def load_all_links():
 
 def run_content_crawler(topic_url):
     try:
-        # 設定 timeout，避免卡死一頁卡住全流程
-        subprocess.run(
+        # 設定 timeout，避免卡死一頁卡住全流程；check=False 以便檢查 returncode
+        cp = subprocess.run(
             [
                 sys.executable,
                 str(CONTENT_SCRIPT),
                 topic_url
             ],
-            check=True,
+            check=False,
             timeout=600  # 單個主題頁最多爬10分鐘，可視規模自行調整
         )
-        print(f"[OK] 已爬取主題頁內容：{topic_url}")
+        if cp.returncode == 0:
+            print(f"[OK] 已爬取主題頁內容：{topic_url}")
+            return "OK"
+        elif cp.returncode == 100:
+            print(f"[STOP] {topic_url} 回報『起始即連續 3 則皆已存在』→ 結束整體流程。")
+            return "STOP"
+        else:
+            print(f"[ERR] 主題頁爬取失敗：{topic_url} (returncode={cp.returncode})")
+            return "ERR"
     except subprocess.TimeoutExpired:
         print(f"[TIMEOUT] {topic_url} 超過 10 分鐘，自動跳過。")
-    except subprocess.CalledProcessError as e:
-        print(f"[ERR] 主題頁爬取失敗：{topic_url}\n{e}")
+        return "TIMEOUT"
 
 
 def main():
@@ -54,9 +61,11 @@ def main():
 
     for idx, topic_url in enumerate(all_topic_urls, 1):
         print(f"[{idx}/{len(all_topic_urls)}] 開始爬取主題頁：{topic_url}")
-        run_content_crawler(topic_url)
+        status = run_content_crawler(topic_url)
+        if status == "STOP":
+            break
 
-    print("【所有主題頁皆已刷新完畢】")
+    print("【流程結束】")
 
 
 if __name__ == "__main__":
