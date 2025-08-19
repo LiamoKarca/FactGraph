@@ -22,3 +22,7 @@ dist/                # 前端 build output 放在這裡
 src/crawler/
 
 src/knowledge_base_operation/
+
+# Webdriver Manager 快取
+.wdm-cache/  
+.wdm/        

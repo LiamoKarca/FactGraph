@@ -1,5 +1,5 @@
 """
-MOI 新聞爬蟲（全量 + 動態偵測上限頁數 + 逐篇存檔 + 連三重複即中斷 + 起始頁防坎 + 可指定起始頁）
+MOI 新聞爬蟲（全量 + 動態偵測上限頁數 + 逐篇存檔 + 連三重複即中斷 + 起始頁防坎 + 連5頁0篇視為維護 + 可指定起始頁）
 ----------------------------------------------------------------
 重點：
 1) 指定起始頁：python src/knowledge_base_operation/news_crawler/moi/moi.py --start-page <PAGE>
@@ -7,6 +7,7 @@ MOI 新聞爬蟲（全量 + 動態偵測上限頁數 + 逐篇存檔 + 連三重�
 3) 逐篇即時存檔（原子寫入）。
 4) 連續三篇皆為重複 → 中斷（僅非起始頁生效）。
 5) 起始頁防坎：起始頁不套用中斷門檻，且起始頁結束時重置連號。
+6) 若連續 5 頁列表皆顯示 0 篇 → 研判站方維護中 → 立即終止（並保險存檔一次）。
 輸出檔：data/raw/news/moi/moi_news.json
 """
 
@@ -52,14 +53,16 @@ XPATH_CANDIDATES = [
     ),
 ]
 
-FALLBACK_MAX_PAGE = 1500            # 動態頁數解析失敗時回退
-MAX_CONSEC_DUP = 3                  # 連續重複門檻
-SUPPRESS_DUP_STOP_ON_START_PAGE = True  # 起始頁是否關閉門檻
-
+FALLBACK_MAX_PAGE = 1500                 # 動態頁數解析失敗時回退
+MAX_CONSEC_DUP = 3                       # 連續重複門檻
+SUPPRESS_DUP_STOP_ON_START_PAGE = True   # 起始頁是否關閉門檻
+ZERO_PAGE_LIMIT = 5                      # ★ 連續 0 篇頁數達此上限 → 視為維護中
 
 # =========================
 # 工具函式
 # =========================
+
+
 def init_driver() -> webdriver.Chrome:
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
@@ -100,6 +103,9 @@ def page_url(page_index: int) -> str:
 
 
 def parse_news_links(html: str) -> List[str]:
+    """
+    回傳內頁相對連結清單。維護頁面通常不含預期的表格結構，將返回空列表。
+    """
     soup = BeautifulSoup(html, "html.parser")
     rows = soup.find_all("tr")
     if not rows:
@@ -119,6 +125,7 @@ def detect_max_page(driver: webdriver.Chrome, timeout_sec: int = 10) -> tuple[in
     driver.get(page_url(1))
     wait = WebDriverWait(driver, timeout_sec)
 
+    # 1) 主要 XPath
     for xp in XPATH_CANDIDATES:
         try:
             elem = wait.until(EC.presence_of_element_located((By.XPATH, xp)))
@@ -130,6 +137,7 @@ def detect_max_page(driver: webdriver.Chrome, timeout_sec: int = 10) -> tuple[in
         except Exception:
             continue
 
+    # 2) 備援：掃描 ul[2] li
     try:
         ul_xpath = '//*[@id="CCMS_Content"]/div/div/div/div[3]/div/div/div/ul[2]'
         ul_elem = driver.find_element(By.XPATH, ul_xpath)
@@ -147,6 +155,7 @@ def detect_max_page(driver: webdriver.Chrome, timeout_sec: int = 10) -> tuple[in
     except Exception:
         pass
 
+    # 3) 備援：尋找「最後」連結，從 href 解析 page=
     try:
         last_link = driver.find_element(By.PARTIAL_LINK_TEXT, "最後")
         href = last_link.get_attribute("href") or ""
@@ -157,6 +166,7 @@ def detect_max_page(driver: webdriver.Chrome, timeout_sec: int = 10) -> tuple[in
     except Exception:
         pass
 
+    # 4) 全部失敗，回退
     return FALLBACK_MAX_PAGE, f"⚠️ 解析失敗，回退為 {FALLBACK_MAX_PAGE}（請檢查 DOM 或更新 XPath）"
 
 
@@ -226,6 +236,7 @@ def crawl_moi_news(start_page: int = 1) -> None:
     old_data, old_titles = load_existing_data(OUTPUT_PATH)
 
     consecutive_dup = 0
+    consecutive_zero_pages = 0   # ★ 新增：連續 0 篇頁面計數
     stop_requested = False
 
     try:
@@ -255,12 +266,34 @@ def crawl_moi_news(start_page: int = 1) -> None:
 
             url = page_url(page_index)
             print(
-                f"📄 正在處理列表頁：{url}（起始頁門檻 {'開啟' if dup_gate_enabled else '關閉'}）")
+                f"📄 正在處理列表頁：{url}（起始頁門檻 {'開啟' if dup_gate_enabled else '關閉'}）"
+            )
             driver.get(url)
             time.sleep(3)
 
             hrefs = parse_news_links(driver.page_source)
             print(f"📑 本頁共 {len(hrefs)} 篇")
+
+            # ★ 維護偵測：若本頁 0 篇 → 累計；否則重置
+            if len(hrefs) == 0:
+                consecutive_zero_pages += 1
+                print(
+                    f"🧰 維護偵測：連續 0 篇頁數 {consecutive_zero_pages}/{ZERO_PAGE_LIMIT}"
+                )
+                if consecutive_zero_pages >= ZERO_PAGE_LIMIT:
+                    # 保險存檔一次（逐篇已寫，但再確保）
+                    atomic_write_json(old_data, OUTPUT_PATH)
+                    print("🛑 偵測到連續 5 頁 0 篇，研判『內政部全球資訊網 系統維護中』，提前終止。")
+                    stop_requested = True
+                    break
+                # 0 篇頁面沒有文章可處理，直接進入下一頁
+                print(f"➡️ 頁面進度：{page_index}/{max_page}")
+                continue
+            else:
+                # 只要遇到有文章的頁面，即重置維護計數
+                if consecutive_zero_pages > 0:
+                    print("🔄 偵測到非 0 篇頁面，維護計數已重置為 0。")
+                consecutive_zero_pages = 0
 
             for i, rel in enumerate(hrefs, start=1):
                 if stop_requested:
@@ -333,7 +366,7 @@ def crawl_moi_news(start_page: int = 1) -> None:
 # =========================
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="MOI 新聞爬蟲（全量 + 動態頁數偵測 + 逐篇原子寫入 + 連三重複即中斷 + 起始頁防坎 + 可指定起始頁）"
+        description="MOI 新聞爬蟲（全量 + 動態頁數偵測 + 逐篇原子寫入 + 連三重複即中斷 + 起始頁防坎 + 連5頁0篇視為維護 + 可指定起始頁）"
     )
     parser.add_argument(
         "--start-page",

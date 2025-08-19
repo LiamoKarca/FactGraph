@@ -59,3 +59,7 @@ src/web/key/
 src/crawler/
 
 src/knowledge_base_operation/
+
+# Webdriver Manager 快取
+.wdm-cache/ 
+.wdm/        
