@@ -188,7 +188,7 @@ def save_records(old_records: list, new_records: list, out_path: Path):
     return final
 
 
-def fetch_cna_content(topic_url: str, target_num: int = 300, out_path: str = "data/raw/news/cna/content.json"):
+def fetch_cna_content(topic_url: str, target_num: int = 300, out_path: str = "data/raw/news/cna/cna_news.json"):
     """主流程：呼叫各副程式完成新聞爬取及存檔"""
     OUT_PATH = Path(out_path)
     old_records, old_url_set = load_old_records(OUT_PATH)

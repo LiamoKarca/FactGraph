@@ -122,7 +122,7 @@ def make_article_id(url: str) -> str:
     理念：
     - 同一篇文章的 URL 應該唯一，因此以其作為主鍵可天然去重。
     """
-    return f"PTS_{md5(url.encode('utf-8')).hexdigest()[:8]}"
+    return f"PTS_{md5(url.encode('utf-8-sig')).hexdigest()[:8]}"
 
 
 # ──────────────────────────────
@@ -139,7 +139,7 @@ def fetch_html(url: str, session: requests.Session) -> Optional[str]:
     try:
         res = session.get(url, headers=HEADERS, timeout=10)
         if res.status_code == 200:
-            res.encoding = "utf-8"
+            res.encoding = "utf-8-sig"
             return res.text
         print(f"❌ HTTP {res.status_code} → {url}")
     except requests.RequestException as exc:
@@ -245,7 +245,7 @@ def load_existing_records(file_path: Path) -> List[Dict]:
     if not file_path.exists():
         return []
     try:
-        with file_path.open("r", encoding="utf-8") as fp:
+        with file_path.open("r", encoding="utf-8-sig") as fp:
             data = json.load(fp)
             return data if isinstance(data, list) else []
     except (OSError, json.JSONDecodeError) as exc:
@@ -291,7 +291,7 @@ def atomic_save_json(file_path: Path, data: List[Dict]) -> None:
     """
     file_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = file_path.with_suffix(file_path.suffix + ".tmp")
-    with tmp_path.open("w", encoding="utf-8") as fp:
+    with tmp_path.open("w", encoding="utf-8-sig") as fp:
         json.dump(data, fp, ensure_ascii=False, indent=2)
     tmp_path.replace(file_path)
 

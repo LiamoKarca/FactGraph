@@ -7,7 +7,7 @@ PIPELINE_DIR = Path(__file__).parent
 PROJECT_ROOT = PIPELINE_DIR.parents[3]
 
 LINK_LIST_PATH = PROJECT_ROOT / "data/raw/news/cna/link/list.json"
-CONTENT_PATH = PROJECT_ROOT / "data/raw/news/cna/content.json"
+CONTENT_PATH = PROJECT_ROOT / "data/raw/news/cna/cna_news.json"
 FRONTPAGE_SCRIPT = PIPELINE_DIR / "frontpage_link_collector.py"
 CONTENT_SCRIPT = PIPELINE_DIR / "content.py"
 
