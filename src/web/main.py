@@ -15,13 +15,13 @@ from pydantic import BaseModel
 
 from .deps import get_settings
 from .init_model import load_ckip_model
-from .routers import health, verifier, answerer
+from .routers import health, verifier, answerer, rag_mode
 
 # ── 確保本地目錄存在，避免檔案操作錯誤 ─────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent  # …/FactGraph/src/web
 # 應該往上兩層才是專案根目錄 …/home/karca5103/dev/FactGraph
 PROJECT_ROOT = BASE_DIR.parent.parent
-for mode in ("verifier", "answerer"):
+for mode in ("verifier", "answerer", "rag_mode"):
     (PROJECT_ROOT / "data" / "interim" / mode / "user-input").mkdir(parents=True, exist_ok=True)
 
 # ── Firebase Key 路徑 & CORS 設定 ─────────────────────────────────────────────────
@@ -45,6 +45,7 @@ app.add_middleware(
 app.include_router(health.router, prefix="/api")
 app.include_router(verifier.router, prefix="/api")
 app.include_router(answerer.router, prefix="/api")
+app.include_router(rag_mode.router, prefix="/api")
 
 # ── Firebase Admin SDK 初始化 (Admin SDK 不受安全規則限制) ─────────────────────────────
 cred = credentials.Certificate(str(KEY_PATH))
@@ -58,7 +59,7 @@ sync_client = TestClient(app)
 # ── Pydantic 定義 ────────────────────────────────────────────────────────────
 class JobCreate(BaseModel):
     url: str
-    mode: Literal["writing", "question"]
+    mode: Literal["writing", "question", "rag"]
     date: str  # YYYY/MM/DD
 
 
@@ -72,33 +73,31 @@ def process_task(job_id: str, url: str, mode: str, date: str):
     doc_ref = db.collection("url-results").document(job_id)
     doc_ref.update({"status": "RUNNING"})
     try:
-        # 診斷日誌
-        print(f"[process_task] job_id={job_id}, mode={mode}, date={date}")
         files = {"file": ("user.txt", url, "text/plain")}
-        data = {"date": date}
         if mode == "writing":
-            resp = sync_client.post("/api/verifier/query", files=files, data=data)
-            print(f"[verifier] status={resp.status_code}, body={resp.json()}")
+            resp = sync_client.post("/api/verifier/query", files=files, data={"date": date})
             body = resp.json()
             wa, wk = body.get("judge_result", ""), body.get("news_kg", "")
-            update_fields = {"writingAnswer": wa, "writingKnowledge": wk}
-        else:
-            resp = sync_client.post("/api/answerer/query", files=files, data=data)
-            print(f"[answerer] status={resp.status_code}, body={resp.json()}")
+            update_fields = {"writingAnswer": wa, "writingKnowledge": wk,
+                             "questionAnswer": None, "questionKnowledge": None, "ragAnswer": None}
+        elif mode == "question":
+            resp = sync_client.post("/api/answerer/query", files=files, data={"date": date})
             body = resp.json()
             qa = body.get("user_judge_result") or body.get("result") or ""
             qk = body.get("user_news_kg") or body.get("news_kg") or ""
-            update_fields = {"questionAnswer": qa, "questionKnowledge": qk}
-        # 清空另一模式欄位
-        if mode == "writing":
-            update_fields.update(questionAnswer=None, questionKnowledge=None)
-        else:
-            update_fields.update(writingAnswer=None, writingKnowledge=None)
-        # 他日誌輸出
-        print(f"[Firestore] updating fields for {job_id}: {update_fields}")
+            update_fields = {"questionAnswer": qa, "questionKnowledge": qk,
+                             "writingAnswer": None, "writingKnowledge": None, "ragAnswer": None}
+        else:  # mode == "rag"
+            # RAG 無需日期；呼叫同步端點拿 result_md
+            resp = sync_client.post("/api/rag_mode/query", files=files)
+            body = resp.json()
+            ra = body.get("result_md", "")
+            update_fields = {"ragAnswer": ra,
+                             "writingAnswer": None, "writingKnowledge": None,
+                             "questionAnswer": None, "questionKnowledge": None}
+
         doc_ref.update(update_fields)
         doc_ref.update({"status": "DONE"})
-        print(f"[process_task] DONE job_id={job_id}")
     except Exception as e:
         print(f"[process_task] EXCEPTION job_id={job_id}: {e}")
         doc_ref.update({"status": "FAILED"})
