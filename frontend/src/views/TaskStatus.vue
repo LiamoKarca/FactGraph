@@ -1,31 +1,33 @@
-<!-- frontend/src/views/TaskStatus.vue -->
 <template>
-  <!-- 錯誤訊息提示 -->
-  <div class="error-message" v-if="errorMessage" :class="{ show: errorMessage }">
+  <div class="error-message" :class="{ show: errorMessage }" v-if="errorMessage">
     {{ errorMessage }}
   </div>
 
-  <!-- 裝飾圖案 -->
+  <!-- 裝飾圖案（與首頁相同） -->
   <img src="/dog hend.png" class="dog-hand dog-hand-1" alt="dog hand" />
   <img src="/dog hend.png" class="dog-hand dog-hand-2" alt="dog hand" />
   <img src="/dog hend.png" class="dog-hand dog-hand-3" alt="dog hand" />
 
-  <!-- Header -->
+  <!-- Header（與首頁相同結構與 class） -->
   <header class="header">
     <div class="header-left">
       <span class="header-icon" role="img" aria-label="camera">
         <img src="/camara icon.png" alt="camera icon" style="width:60px;height:60px;display:block;" />
       </span>
-      <span class="header-title">圖破謠言，新聞真偽辨識AI</span>
+      <div class="header-title">
+        <div class="title">芒狗偵探</div>
+        <div class="header-subtitle">新聞查核，透明可信，快速回覆。</div>
+      </div>
     </div>
+
     <div class="header-right">
-      <button class="menu-btn" @click="$refs.menu.classList.toggle('show')">
+      <button class="menu-btn" @click="toggleMenu" :aria-expanded="showMenu" aria-label="toggle menu">
         <span class="menu-bar"></span>
         <span class="menu-bar"></span>
         <span class="menu-bar"></span>
       </button>
-      <nav class="menu-dropdown" ref="menu">
-        <a href="#">首頁</a>
+      <nav class="menu-dropdown" :class="{ show: showMenu }" ref="menu">
+        <a href="/">首頁</a>
         <a href="#">服務介紹</a>
         <a href="#">關於我們</a>
       </nav>
@@ -36,55 +38,48 @@
 
   <!-- 主體容器 -->
   <div class="container">
-    <h1>查詢結果</h1>
+    <h1
+      @mouseenter="titleHover = true"
+      @mouseleave="titleHover = false"
+      :style="{ transform: titleHover ? 'scale(1.01)' : 'scale(1)', transition: 'transform .15s ease' }"
+    >
+      查核結果
+    </h1>
 
-    <!-- 分頁切換 -->
-    <div class="tab-switch">
-      <button
-        class="tab-btn"
-        :class="{ active: tabType === 'writing' }"
-        @click="tabType = 'writing'"
-      >
-        文案查詢
-      </button>
-      <button
-        class="tab-btn"
-        :class="{ active: tabType === 'question' }"
-        @click="tabType = 'question'"
-      >
-        詢問模式
-      </button>
-    </div>
+    <!-- 任務資訊列 -->
+    <p style="margin:8px 0 12px;color:#666;font-size:.95rem;">
+      Task ID：<code>{{ taskId }}</code>
+      <span v-if="status"> ｜ 狀態：{{ status }} ｜ {{ modeLabel }}</span>
+    </p>
 
-    <!-- 判斷結果區塊 -->
-    <div class="answer-card" :class="{ default: !loading && currentResult === defaultMsg }">
-      <template v-if="loading">
+    <!-- 結果卡片 -->
+    <div class="answer-card" :class="{ default: !result }">
+      <template v-if="loading || status !== 'DONE'">
         <div class="loading-spinner"></div>
-        <p class="loading-text">偵探調查中… 請稍候</p>
+        <p class="loading-text">芒狗調查中… 請稍候</p>
       </template>
       <template v-else>
-        <div v-html="currentResult"></div>
+        <div v-html="result || defaultMsg"></div>
       </template>
     </div>
 
-    <!-- 對照知識區塊 -->
-    <div class="knowledge-wrapper">
+    <!-- 對照知識：僅在非 RAG 模式顯示 -->
+    <div class="knowledge-wrapper" v-if="mode !== 'rag'">
       <button class="collapse-btn" @click="knowledgeCollapsed = !knowledgeCollapsed">
         {{ knowledgeCollapsed ? '展開對照知識' : '收起對照知識' }}
-        <span class="triangle" :class="{ rotated: !knowledgeCollapsed }">…</span>
+        <span class="triangle" :class="{ rotated: !knowledgeCollapsed }">
+          <svg width="18" height="18" viewBox="0 0 18 18"><polygon points="4,7 9,12 14,7" fill="#fff" /></svg>
+        </span>
       </button>
+
       <transition name="fade">
-        <div
-          class="knowledge-card"
-          :class="{ default: !loading && currentKnowledge === defaultKnowledgeMsg }"
-          v-show="loading || !knowledgeCollapsed"
-        >
-          <template v-if="loading">
+        <div v-show="!knowledgeCollapsed" class="knowledge-card" :class="{ default: !knowledge }">
+          <template v-if="loading || status !== 'DONE'">
             <div class="loading-spinner"></div>
-            <p class="loading-text">偵探調查中… 請稍候</p>
+            <p class="loading-text">芒狗調查中… 請稍候</p>
           </template>
           <template v-else>
-            <div v-html="currentKnowledge"></div>
+            <div v-html="knowledge || defaultKnowledgeMsg"></div>
           </template>
         </div>
       </transition>
@@ -93,110 +88,131 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { useRoute }            from 'vue-router'
-import { db }                  from '../firebase'
-import { doc, onSnapshot }     from 'firebase/firestore'
+import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
+import { useRoute } from 'vue-router'
+import { db } from '../firebase'
+import { doc, onSnapshot } from 'firebase/firestore'
 
-// 取路由上的 jobId
-const route  = useRoute()
-const jobId  = route.params.id
+/** 與首頁相同的預設文字 */
+const defaultMsg = `<p>這裡會顯示結果。</p>`
+const defaultKnowledgeMsg = `<p>這裡會顯示對照知識。</p>`
 
-// Tab、Loading、折疊、錯誤訊息
-const tabType            = ref('writing')
-const loading            = ref(true)
+// Header 狀態
+const showMenu = ref(false)
+function toggleMenu(){ showMenu.value = !showMenu.value }
+const titleHover = ref(false)
+
+// 來自路由的 task id
+const route = useRoute()
+const taskId = ref(String(route.params.id || ''))
+
+// 任務狀態與資料
+const status = ref('PENDING')   // Firestore status
+const loading = ref(true)
+const mode = ref('')            // 'rag' | 'writing' | 'question'
+
+const result = ref('')          // 主要結果
+const knowledge = ref('')       // 對照知識
 const knowledgeCollapsed = ref(true)
-const errorMessage       = ref('')
+
+const errorMessage = ref('')
+let errorTimeout = null
+let unsubscribe = null
+
 function showError(msg) {
   errorMessage.value = msg
+  clearTimeout(errorTimeout)
+  errorTimeout = setTimeout(() => (errorMessage.value = ''), 2000)
 }
 
-// 原始預設文字
-const defaultMsg          = '這裡會顯示結果。'
-const defaultKnowledgeMsg = '這裡會顯示對照知識。'
+/** 將後端 mode 轉成人類可讀 */
+const modeLabel = computed(() => {
+  switch (mode.value) {
+    case 'rag': return '實時 RAG'
+    case 'writing': return '文案查詢'
+    case 'question': return '詢問模式'
+    default: return mode.value || '即將出爐...'
+  }
+})
 
-// Firestore 的四個欄位
-const answerWriting     = ref(defaultMsg)
-const knowledgeWriting  = ref(defaultKnowledgeMsg)
-const answerQuestion    = ref(defaultMsg)
-const knowledgeQuestion = ref(defaultKnowledgeMsg)
+/** 將 Firestore 資料套用到畫面 */
+function applySnapshot(data) {
+  if (data.mode) mode.value = data.mode
 
-// 計算目前要呈現哪個欄位
-const currentResult = computed(() =>
-  tabType.value === 'writing' ? answerWriting.value : answerQuestion.value
-)
-const currentKnowledge = computed(() =>
-  tabType.value === 'writing' ? knowledgeWriting.value : knowledgeQuestion.value
-)
+  status.value = data.status || 'PENDING'
+  if (status.value !== 'DONE') {
+    loading.value = true
+    return
+  }
 
-// 一掛載就訂閱 Firestore
-onMounted(() => {
-  const docRef = doc(db, 'url-results', jobId)
-  onSnapshot(
+  // DONE：依模式填資料
+  if (mode.value === 'rag') {
+    result.value = data.ragAnswer || ''
+    knowledge.value = '' // RAG 不顯示對照知識
+  } else if (mode.value === 'question') {
+    result.value = data.questionAnswer || ''
+    knowledge.value = data.questionKnowledge || ''
+  } else {
+    // 默認以 writing 視之
+    result.value = data.writingAnswer || ''
+    knowledge.value = data.writingKnowledge || ''
+  }
+
+  loading.value = false
+}
+
+/** 訂閱任務狀態 */
+function subscribe(id) {
+  if (!id) {
+    showError('缺少任務 ID')
+    return
+  }
+  if (unsubscribe) { try { unsubscribe() } catch {} unsubscribe = null }
+
+  loading.value = true
+  status.value = 'PENDING'
+  result.value = ''
+  knowledge.value = ''
+
+  const docRef = doc(db, 'url-results', id)
+  unsubscribe = onSnapshot(
     docRef,
     snap => {
-      if (!snap.exists()) {
-        loading.value = false
-        return
-      }
+      if (!snap.exists()) return
       const data = snap.data()
 
-      // 依照 mode 切分頁
-      if (data.mode === 'writing' || data.mode === 'question') {
-        tabType.value = data.mode
-      }
-
-      // 失敗時顯示通用錯誤
-      if (data.status === 'FAILED') {
+      // 後端若標註錯誤，直接顯示在結果區
+      if (data.error?.code && data.error?.message) {
         loading.value = false
-        showError('任務執行失敗，請稍後重試')
+        status.value = 'DONE'
+        mode.value = data.mode || mode.value
+        result.value = `<p>⚠️ ${data.error.message}</p>`
+        knowledge.value = mode.value === 'rag' ? '' : `<p>（無對照知識）</p>`
         return
       }
 
-      // 還在跑，保持 loading
-      if (data.status !== 'DONE') {
-        loading.value = true
-        return
-      }
-
-      // ✅ DONE 狀態，先判斷有無回答
-      const noAnswer = data.mode === 'writing'
-        ? (!data.writingAnswer && !data.writingKnowledge)
-        : (!data.questionAnswer && !data.questionKnowledge)
-
-      if (noAnswer) {
-        alert(
-          '📢 芒狗通知您 🐶\n' +
-          '目前這個問題沒有足夠的知識可以匹配📚\n請換個問法或問題再試一次🔁！'
-        )
-        // 跳回原頁面（覆蓋式）
-        window.location.replace('https://factgraph-38be7.web.app/')
-        return
-      }
-
-      // ✅ 真有結果，關閉 loading，並寫入欄位
-      loading.value = false
-      answerWriting.value     = data.writingAnswer     || defaultMsg
-      knowledgeWriting.value  = data.writingKnowledge  || defaultKnowledgeMsg
-      answerQuestion.value    = data.questionAnswer    || defaultMsg
-      knowledgeQuestion.value = data.questionKnowledge || defaultKnowledgeMsg
+      applySnapshot(data)
     },
     err => {
-      console.error('Firestore 監聽失敗：', err)
       loading.value = false
-      showError('無法連線到 Firestore')
+      status.value = 'DONE'
+      result.value = `<p>⚠️ 讀取任務狀態失敗：${err.message}</p>`
+      knowledge.value = ''
     }
   )
+}
+
+onMounted(() => subscribe(taskId.value))
+onBeforeUnmount(() => { if (unsubscribe) { try { unsubscribe() } catch {} } })
+watch(() => route.params.id, v => {
+  taskId.value = String(v || '')
+  subscribe(taskId.value)
 })
 </script>
 
 <style scoped>
 @import '../assets/service.css';
 
-.container {
-  padding: 1rem;
-}
-.tab-switch {
-  margin-bottom: 1rem;
-}
+.container { padding: 1rem; }
+
 </style>

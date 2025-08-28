@@ -619,3 +619,24 @@ button:hover {
   color: #f89b2d;
   margin: 0;
 }
+
+/* Header 兩行文字佈局 */
+.header-left { display: flex; align-items: center; gap: 8px; }
+.header-text { display: flex; flex-direction: column; line-height: 1.2; }
+.header-title { font-size: 1.2rem; color: #222; font-weight: 700; letter-spacing: 1px; }
+.header-subtitle { font-size: 0.95rem; color: #8c8c8c; font-weight: 400; }
+
+/* Tabs 與輸入區之間的距離再拉開 */
+.tab-switch { margin-bottom: 28px; }  /* 原本是 18px，再多留 10px 空氣感 */
+
+/* 輸入框與「開始查核」按鈕不要貼太近 */
+.input-area { gap: 16px; }            /* 原本 10px → 16px，視覺更舒適 */
+.input-group { gap: 12px; }           /* 同步略增 */
+#query-btn { margin-left: 8px; }      /* 再保險加 8px 左邊距，避免“貼齊”的錯覺 */
+
+/* 手機版也一併優化：tabs 下緣與輸入區距離補強 */
+@media (max-width: 768px) {
+  .tab-switch { margin-bottom: 20px; }  /* 原本 20 左右，這裡明確指定 */
+  #query-btn { margin-left: 0; }        /* 縱向排列時移除左邊距 */
+}
+

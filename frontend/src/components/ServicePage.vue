@@ -3,7 +3,7 @@
     {{ errorMessage }}
   </div>
 
-  <!-- 裝飾圖案 -->
+  <!-- 裝飾圖案（沿用） -->
   <img src="/dog hend.png" class="dog-hand dog-hand-1" alt="dog hand" />
   <img src="/dog hend.png" class="dog-hand dog-hand-2" alt="dog hand" />
   <img src="/dog hend.png" class="dog-hand dog-hand-3" alt="dog hand" />
@@ -14,15 +14,20 @@
       <span class="header-icon" role="img" aria-label="camera">
         <img src="/camara icon.png" alt="camera icon" style="width:60px;height:60px;display:block;" />
       </span>
-      <span class="header-title">圖破謠言，新聞真偽辨識AI</span>
+
+      <div class="header-text">
+        <div class="header-title">芒狗偵探</div>
+        <div class="header-subtitle">新聞查核，透明可信，快速回覆。</div>
+      </div>
     </div>
+
     <div class="header-right">
-      <button class="menu-btn" @click="$refs.menu.classList.toggle('show')">
+      <button class="menu-btn" @click="toggleMenu" :aria-expanded="showMenu" aria-label="toggle menu">
         <span class="menu-bar"></span>
         <span class="menu-bar"></span>
         <span class="menu-bar"></span>
       </button>
-      <nav class="menu-dropdown" ref="menu">
+      <nav class="menu-dropdown" :class="{ show: showMenu }" ref="menu">
         <a href="#">首頁</a>
         <a href="#">服務介紹</a>
         <a href="#">關於我們</a>
@@ -34,16 +39,19 @@
 
   <!-- 主體容器 -->
   <div class="container">
-    <h1>來找芒狗偵探，幫你了解真相！</h1>
+    <h1
+      @mouseenter="titleHover = true"
+      @mouseleave="titleHover = false"
+      :style="{ transform: titleHover ? 'scale(1.01)' : 'scale(1)', transition: 'transform .15s ease' }"
+    >
+      來找芒狗偵探，幫你了解真相！
+    </h1>
 
-    <!-- 分頁切換 -->
+    <!-- 分頁 -->
     <div class="tab-switch">
-      <button class="tab-btn" :class="{ active: tabType === 'writing' }" @click="switchTab('writing')">
-        文案查詢
-      </button>
-      <button class="tab-btn" :class="{ active: tabType === 'question' }" @click="switchTab('question')">
-        詢問模式
-      </button>
+      <button class="tab-btn" :class="{ active: tabType === 'rag' }" @click="switchTab('rag')">實時 RAG</button>
+      <button class="tab-btn" :class="{ active: tabType === 'writing' }" @click="switchTab('writing')">文案查詢</button>
+      <button class="tab-btn" :class="{ active: tabType === 'question' }" @click="switchTab('question')">詢問模式</button>
     </div>
 
     <!-- 輸入區域 -->
@@ -52,55 +60,60 @@
         <input
           type="text"
           v-model="input"
-          :placeholder="tabType === 'writing' ? '請輸入文案內容...' : '請輸入你的問題...'"
+          :placeholder="placeholderText"
         />
+
+        <!-- 日期選擇（僅 writing / question 顯示） -->
         <input
-          class="date-input"
+          v-if="tabType !== 'rag'"
+          ref="dateInput"
+          class="date-input flatpickr-input"
+          type="text"
           inputmode="none"
+          readonly
+          v-model="date"
           :placeholder="datePlaceholder"
-          style="background:#fff8f0; cursor:pointer;"
+          style="cursor:pointer;"
         />
+
         <button
           id="query-btn"
           :class="{ bounce: isBouncing }"
-          @click="validateAndQuery"
+          @click="tabType === 'rag' ? startRagCheck() : validateAndQuery()"
         >
           {{ loading ? '調查中…' : '開始查核' }}
         </button>
       </div>
     </div>
 
-    <!-- 查核結果區塊 -->
-    <div class="answer-card" :class="{ default: !loading && result === defaultMsg }">
+    <!-- 查核結果 -->
+    <div class="answer-card" :class="{ default: !result }">
       <template v-if="loading">
         <div class="loading-spinner"></div>
         <p class="loading-text">芒狗調查中… 請稍候</p>
       </template>
       <template v-else>
-        <div v-html="result"></div>
+        <div v-html="result || defaultMsg"></div>
       </template>
     </div>
 
-    <!-- 對照知識區塊 -->
-    <div class="knowledge-wrapper">
+    <!-- 對照知識（實時 RAG 隱藏） -->
+    <div class="knowledge-wrapper" v-if="tabType !== 'rag'">
       <button class="collapse-btn" @click="knowledgeCollapsed = !knowledgeCollapsed">
         {{ knowledgeCollapsed ? '展開對照知識' : '收起對照知識' }}
         <span class="triangle" :class="{ rotated: !knowledgeCollapsed }">
           <svg width="18" height="18" viewBox="0 0 18 18"><polygon points="4,7 9,12 14,7" fill="#fff" /></svg>
         </span>
       </button>
+
       <transition name="fade">
-        <div
-          class="knowledge-card"
-          :class="{ default: !loading && knowledgeResult === defaultKnowledgeMsg }"
-          v-show="loading || !knowledgeCollapsed"
-        >
+        <div v-show="!knowledgeCollapsed" class="knowledge-card" :class="{ default: !knowledgeResult }">
           <template v-if="loading">
             <div class="loading-spinner"></div>
             <p class="loading-text">芒狗調查中… 請稍候</p>
           </template>
           <template v-else>
-            <div v-html="knowledgeResult"></div>
+            <div v-html="knowledgeResult || defaultKnowledgeMsg"></div>
           </template>
         </div>
       </transition>
@@ -109,12 +122,14 @@
 
   <!-- 臨時網址彈窗 -->
   <transition name="fade">
-    <div v-if="showUrlModal" class="modal-overlay">
-      <div class="modal-box">
-        <h3>臨時查詢網址</h3>
-        <p class="url-text" @click="copyUrl" title="點擊複製">{{ tempUrl }}</p>
-        <small>稍後可由此網址查看調查結果</small>
-        <button class="modal-ok" @click="showUrlModal = false">確定</button>
+    <div class="modal-mask" v-if="showUrlModal" @click.self="showUrlModal = false">
+      <div class="modal-wrapper">
+        <div class="modal-container">
+          <h3>已建立臨時查詢網址</h3>
+          <p class="url-text" @click="copyUrl" title="點擊複製">{{ tempUrl }}</p>
+          <small>稍後可由此網址查看調查結果</small>
+          <button class="modal-ok" @click="showUrlModal = false">確定</button>
+        </div>
       </div>
     </div>
   </transition>
@@ -122,7 +137,7 @@
 
 <script setup>
 import axios from 'axios'
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, nextTick, watch, onBeforeUnmount } from 'vue'
 import flatpickr from 'flatpickr'
 import 'flatpickr/dist/flatpickr.min.css'
 import { getAuth, signInAnonymously } from 'firebase/auth'
@@ -131,163 +146,241 @@ import { doc, onSnapshot } from 'firebase/firestore'
 
 const BASE_URL = ''
 
-// -------------------------
-// 狀態管理
-// -------------------------
+/** 預設訊息 */
+const defaultMsg = `<p>這裡會顯示結果。</p>`
+const defaultKnowledgeMsg = `<p>這裡會顯示對照知識。</p>`
+
+/** 狀態 */
 const loading = ref(false)
-const tabType = ref('writing')
+const tabType = ref('writing')   // 'rag' | 'writing' | 'question'
 const input = ref('')
 const date = ref('')
-const defaultMsg = '這裡會顯示結果。'
-const defaultKnowledgeMsg = '這裡會顯示對照知識。'
-const result = ref(defaultMsg)
-const knowledgeResult = ref(defaultKnowledgeMsg)
+const result = ref('')
+const knowledgeResult = ref('')
+const knowledgeCollapsed = ref(true)
 const errorMessage = ref('')
 const isBouncing = ref(false)
-const knowledgeCollapsed = ref(true)
+const titleHover = ref(false)
+const showMenu = ref(false)
 let errorTimeout = null
 
-// 臨時網址 & 複製功能
-const showUrlModal = ref(false)
-const tempUrl = ref('')
-let unsubscribe = null
-
-function copyUrl() {
-  navigator.clipboard.writeText(tempUrl.value)
-    .then(() => alert('已複製臨時網址'))
-    .catch(() => alert('複製失敗，請手動複製'))
-}
-
-// 日期選擇器提示文字
-const datePlaceholder = computed(() =>
-  tabType.value === 'question' ? '選擇事件詢問日期' : '選擇新聞發布日期'
-)
-
-// 初始化 flatpickr & 匿名登入
-onMounted(async () => {
-  flatpickr(document.querySelector('.date-input'), {
-    dateFormat: 'Y/m/d',
-    defaultDate: date.value,
-    clickOpens: true,
-    allowInput: false,
-    disableMobile: true,
-    onChange: (_, dateStr) => (date.value = dateStr)
-  })
-
-  try {
-    const auth = getAuth()
-    await signInAnonymously(auth)
-    console.log('Firebase 已匿名登入，UID =', auth.currentUser.uid)
-  } catch (err) {
-    console.error('匿名登入失敗', err)
-    showError('無法完成匿名登入，請稍後再試')
+/** 分頁 placeholder 文案 */
+const placeholderText = computed(() => {
+  switch (tabType.value) {
+    case 'rag':
+      return '請輸入任何關於臺灣的社會、政治問題，或新聞文案...'
+    case 'writing':
+      return '請輸入完整新聞文案...'
+    case 'question':
+      return '請輸入你的問題...'
+    default:
+      return '請輸入內容…'
   }
 })
 
-// 分頁切換
-function switchTab(type) {
-  tabType.value = type
-  input.value = ''
-  date.value = ''
-  result.value = defaultMsg
-  knowledgeResult.value = defaultKnowledgeMsg
+/** 日期 placeholder */
+const datePlaceholder = computed(() => {
+  if (date.value) return date.value
+  if (tabType.value === 'question') return '今日或事件約莫日期'
+  return '選擇新聞發布日期'
+})
+
+/** Menu */
+function toggleMenu(){ showMenu.value = !showMenu.value }
+
+/** 複製臨時網址 */
+const showUrlModal = ref(false)
+const tempUrl = ref('')
+
+function copyUrl() {
+  navigator.clipboard.writeText(tempUrl.value)
+    .then(() => alert('已複製到剪貼簿'))
+    .catch(() => alert('複製失敗，請手動複製'))
 }
 
-// 顯示錯誤
+/** Firestore 訂閱控制 */
+let unsubscribe = null
+
+/** flatpickr 相關 */
+const dateInput = ref(null)      // <input> DOM
+let fp = null                    // flatpickr instance
+
+function initDatePicker() {
+  if (!dateInput.value) return
+  if (fp) { fp.destroy(); fp = null }
+
+  fp = flatpickr(dateInput.value, {
+    dateFormat: 'Y/m/d',
+    defaultDate: date.value || null,
+    allowInput: false,
+    onChange: (_selected, dateStr) => { date.value = dateStr },
+  })
+}
+
+function destroyDatePicker() {
+  if (fp) { fp.destroy(); fp = null }
+}
+
+/** 掛載 */
+onMounted(async () => {
+  try { await signInAnonymously(getAuth()) } catch {}
+  if (tabType.value !== 'rag') {
+    await nextTick()
+    initDatePicker()
+  }
+})
+
+/** 切換分頁：清空輸入並處理日期選擇器 */
+function switchTab(t) {
+  tabType.value = t
+  input.value = ''
+  date.value = ''
+  result.value = ''
+  knowledgeResult.value = ''
+
+  // v-if 會新增/移除日期欄位，等 DOM 更新後再處理 picker
+  nextTick(() => {
+    if (tabType.value !== 'rag') initDatePicker()
+    else destroyDatePicker()
+  })
+}
+
+/** 其他同步：外部更新 date → picker 也更新 */
+watch(date, (d) => {
+  if (fp && d) fp.setDate(d, true)
+})
+
+/** 防漏：切頁也做檢查（若 switchTab 改動，這裡亦可保險） */
+watch(tabType, async (t) => {
+  if (t !== 'rag') {
+    await nextTick()
+    initDatePicker()
+  } else {
+    destroyDatePicker()
+  }
+})
+
+/** 卸載時銷毀 picker */
+onBeforeUnmount(() => { destroyDatePicker() })
+
+/** 錯誤提示條 */
 function showError(msg) {
   errorMessage.value = msg
   clearTimeout(errorTimeout)
   errorTimeout = setTimeout(() => (errorMessage.value = ''), 2000)
 }
 
-// 驗證並呼叫 API + onSnapshot 處理結果
+/** 實時 RAG：建立任務 + 訂閱 */
+async function startRagCheck() {
+  isBouncing.value = true
+  setTimeout(() => (isBouncing.value = false), 300)
+  if (!input.value) return showError('請輸入內容！')
+
+  loading.value = true
+  result.value = ''
+  knowledgeResult.value = defaultKnowledgeMsg
+
+  if (unsubscribe) { try { unsubscribe() } catch {} unsubscribe = null }
+
+  let taskId = null
+  try {
+    const { data: task } = await axios.post(`${BASE_URL}/api/tasks`, {
+      url: input.value,        // 沿用的欄位名稱（傳入「文案內容」）
+      mode: 'rag',             // 關鍵：rag
+      date: '2000/01/01'       // 後端不會用到，但型別需要；給一個合法字串即可
+    })
+
+    taskId = task.id
+    tempUrl.value = `${window.location.origin}/tasks/${taskId}`
+    showUrlModal.value = true
+  } catch (e) {
+    console.error('建立 RAG 任務失敗', e)
+    showError('無法建立 RAG 任務，請稍後再試')
+    loading.value = false
+    return
+  }
+
+  const docRef = doc(db, 'url-results', taskId)
+  unsubscribe = onSnapshot(
+    docRef,
+    snap => {
+      if (!snap.exists()) return
+      const data = snap.data()
+      if (data.error?.code === 502) { window.location.href = tempUrl.value; return }
+      if (data.status !== 'DONE') return
+      result.value = data.ragAnswer || '<p>查無結果</p>'
+      loading.value = false
+      if (unsubscribe) { try { unsubscribe() } catch {} unsubscribe = null }
+    },
+    error => {
+      console.error('[onSnapshot] error', error)
+      showError('讀取 RAG 結果失敗，請稍後再試')
+      loading.value = false
+    }
+  )
+}
+
+/** 文案查詢／詢問模式：建立任務 + 訂閱 */
 async function validateAndQuery() {
   isBouncing.value = true
   setTimeout(() => (isBouncing.value = false), 300)
 
-  if (!input.value) {
-    return showError(tabType.value === 'writing' ? '請輸入內容！' : '請輸入你的問題！')
-  }
-  if (!date.value) {
-    return showError('請選擇日期！')
-  }
+  if (!input.value) return showError(tabType.value === 'writing' ? '請輸入內容！' : '請輸入你的問題！')
+  if (!date.value) return showError('請選擇日期！')
 
   loading.value = true
   result.value = ''
   knowledgeResult.value = ''
 
-  // 清除舊訂閱，並把 unsubscribe 設為 null（避免殘留）
-  if (unsubscribe) {
-    unsubscribe()
-    unsubscribe = null
-  }
+  if (unsubscribe) { try { unsubscribe() } catch {} unsubscribe = null }
 
-  // 1. 呼叫 /api/tasks
-  let taskId
+  let taskId = null
   try {
-    const { data: task } = await axios.post(
-      `${BASE_URL}/api/tasks`,
-      { url: input.value, mode: tabType.value, date: date.value }
-    )
+    const { data: task } = await axios.post(`${BASE_URL}/api/tasks`, {
+      url: input.value, mode: tabType.value, date: date.value
+    })
     taskId = task.id
     tempUrl.value = `${window.location.origin}/tasks/${taskId}`
     showUrlModal.value = true
   } catch (e) {
     console.error('建立臨時任務失敗', e)
-    showError('無法建立查詢任務')
+    showError('無法建立查詢任務，請稍後再試')
     loading.value = false
     return
   }
 
-  // 2. 訂閱 Firestore 任務文件
   const docRef = doc(db, 'url-results', taskId)
   unsubscribe = onSnapshot(
     docRef,
     snap => {
-      console.log('[onSnapshot] got snapshot', snap.exists(), snap.data())
       if (!snap.exists()) return
-
       const data = snap.data()
+      if (data.error?.code === 502) { window.location.href = tempUrl.value; return }
+      if (data.status !== 'DONE') return
 
-      // 1️⃣ 如果後端傳回 502，直接跳到臨時網址
-      if (data.error?.code === 502) {
-        window.location.href = tempUrl.value
-        return
-      }
-
-      // 2️⃣ 只要還沒真正跑完（PENDING / RUNNING），先不做任何處理
-      if (data.status !== 'DONE') {
-        return
-      }
-
-      // 到這裡就是 status === 'DONE'，才能判斷「查無結果」或「顯示結果」
       const noAnswer = tabType.value === 'question'
         ? !data.questionAnswer && !data.questionKnowledge
         : !data.writingAnswer  && !data.writingKnowledge
 
       if (noAnswer) {
-        alert('📢 芒狗通知您 🐶\n目前這個問題沒有足夠的知識可以匹配📚\n請換個問法或問題再試一次🔁！')
-        // 情境1：真正查無就 reload
-        location.reload()
-        return
-      }
-
-      // 5️⃣ 有答案，顯示結果並取消訂閱
-      if (tabType.value === 'question') {
-        result.value        = data.questionAnswer   || defaultMsg
-        knowledgeResult.value = data.questionKnowledge || defaultKnowledgeMsg
+        result.value = '<p>查無結果</p>'
+        knowledgeResult.value = '<p>查無結果</p>'
       } else {
-        result.value        = data.writingAnswer   || defaultMsg
-        knowledgeResult.value = data.writingKnowledge || defaultKnowledgeMsg
+        if (tabType.value === 'question') {
+          result.value = data.questionAnswer || '<p>查無結果</p>'
+          knowledgeResult.value = data.questionKnowledge || '<p>查無結果</p>'
+        } else {
+          result.value = data.writingAnswer || '<p>查無結果</p>'
+          knowledgeResult.value = data.writingKnowledge || '<p>查無結果</p>'
+        }
       }
-
       loading.value = false
-      unsubscribe?.()
+      if (unsubscribe) { try { unsubscribe() } catch {} unsubscribe = null }
     },
-    err => {
-      console.error('[onSnapshot] got error', err)
-      showError('無法連線至 Firestore，請稍後重試')
-      // 保持 loading=true
+    error => {
+      console.error('[onSnapshot] error', error)
+      showError('讀取結果失敗，請稍後再試')
+      loading.value = false
     }
   )
 }
@@ -306,26 +399,57 @@ async function validateAndQuery() {
   opacity: 1;
 }
 
-/* 彈窗遮罩 */
-.modal-overlay {
+/* 正確的遮罩（全螢幕 + 置中） */
+.modal-mask {
   position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,0.4);
+  z-index: 10000;
+  inset: 0;                         /* top/left/right/bottom: 0 的簡寫 */
+  background: rgba(0,0,0,0.45);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 9999;
+  padding: 16px;                    /* 小螢幕避免貼邊 */
 }
 
-/* 彈窗內容 */
-.modal-box {
+/* 包裹層：控制最大寬度 */
+.modal-wrapper {
+  width: 100%;
+  max-width: 560px;
+}
+
+/* 白色內容框 */
+.modal-container {
   background: #fff;
-  padding: 1.5rem;
-  border-radius: 0.5rem;
-  width: 90%;
-  max-width: 360px;
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+  padding: 20px 24px;
+  
+  /* 置中 */
   text-align: center;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* 讓可複製的網址長文友善 */
+.url-text {
+  word-break: break-all;
+  background: #f7f7f7;
+  padding: 0.5rem;
+  border-radius: 0.5rem;
+  margin: 0.5rem 0 0.75rem;
+  cursor: pointer;
+  user-select: text;
+}
+
+.modal-ok {
+  margin-top: 0.25rem;
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 0.5rem;
+  background: #409eff;
+  color: #fff;
+  cursor: pointer;
 }
 
 .url-text {
