@@ -1,8 +1,11 @@
 // frontend/src/firebase.js
-
 // ① Import 需要的 SDK
-import { initializeApp }      from "firebase/app";
-import { getFirestore }       from "firebase/firestore";
+import { initializeApp } from "firebase/app";
+import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from "firebase/firestore";
 
 // ② 貼上從 Console 複製的 Web App config
 const firebaseConfig = {
@@ -18,5 +21,11 @@ const firebaseConfig = {
 // ③ 初始化 Firebase App
 const firebaseApp = initializeApp(firebaseConfig);
 
-// ⑤ 初始化並導出 Firestore 實例
-export const db = getFirestore(firebaseApp);
+// ④ 初始化 Firestore（相容模式 + 本地快取；避免 listen 被外掛/代理擋掉）
+export const db = initializeFirestore(firebaseApp, {
+  experimentalAutoDetectLongPolling: true,
+  useFetchStreams: false,
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager(),
+  }),
+});

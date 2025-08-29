@@ -59,7 +59,7 @@
     <section class="section">
       <h2>使用模式介紹</h2>
       <div class="cards">
-        <article class="card">
+        <article class="intro-card">
           <h3 style="text-align: center;">實時 RAG（最新）</h3>
           <p>直接檢索最新的資料向量庫進行比對，<strong>無需預先建圖譜</strong>即可迅速回覆。</p>
             <li>適用：突發議題的快速核對</li>
@@ -67,7 +67,7 @@
             <li>特點：迅速解答、資料庫覆蓋新</li>
         </article>
 
-        <article class="card">
+        <article class="intro-card">
           <h3 style="text-align: center;">文案查詢（長文）</h3>
           <p>上傳或貼上完整新聞／長文，做全面比對與說明。</p>
             <li>適用：需要整體脈絡與逐條比對</li>
@@ -75,7 +75,7 @@
             <li>等待：約 5–10 分鐘</li>
         </article>
 
-        <article class="card">
+        <article class="intro-card">
           <h3 style="text-align: center;">詢問模式（短問）</h3>
           <p>以問句釐清單點事實，快速得到精簡有力的結論。</p>
             <li>適用：欲確認單一事實或關鍵點</li>
@@ -317,8 +317,45 @@ onBeforeUnmount(() => {
 }
 .section { margin: 20px 0; }
 .bullets { margin-left: 1.25rem; }
+
 .cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 .card { background: #fff; border-radius: 16px; padding: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.06); }
+
+/* 卡片本身別被內容撐出邊界 */
+.intro-card {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 16px;
+  border-radius: 16px;
+  background: #fff;
+}
+
+/* 列表縮排用 padding，不要靠 marker 掛在卡片外 */
+.intro-card ul {
+  margin: 0;
+  padding-left: 1.2rem;
+  list-style: disc;
+  list-style-position: outside; /* 或 inside 視覺看你喜歡 */
+}
+
+/* 核心：讓中文也能在任何點換行，URL/RAG/英文長詞不爆框 */
+.intro-card li {
+  line-height: 1.6;
+  overflow-wrap: anywhere;     /* 最高招：任何地方都可斷行 */
+  word-break: break-word;      /* 相容舊版瀏覽器 */
+  line-break: loose;           /* 針對 CJK 改善分行（支援就會生效） */
+}
+
+/* 手機再收一點字級與內距 */
+@media (max-width: 480px) {
+  .intro-card { padding: 14px; }
+  .intro-card li { font-size: 0.95rem; }
+}
+
+/* 整頁保險，避免誤用絕對定位裝飾圖造成水平捲軸 */
+html, body { overflow-x: hidden; }
+
+
 .steps { margin-left: 1.25rem; }
 
 .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }

@@ -185,15 +185,17 @@ docker run --rm -p 8080:8080 "$IMAGE"
 ---
 
 ## 7. 部署到 Cloud Run
-### 7.1 尋找最新的 tag 
+### 7.1 尋找最新的 tag & 單筆確認 (分開執行)
 ```bash
-gcloud artifacts docker images list \
-  "$REGION-docker.pkg.dev/$PROJECT/$REPO_IMG" \
-  --include-tags \
-  --filter='TAGS!=""' \
-  --sort-by=~CREATE_TIME \
-  --limit=10 \
-  --format='table(CREATE_TIME, TAGS, DIGEST)'
+gcloud artifacts docker tags list \
+  "${REGION}-docker.pkg.dev/${PROJECT}/${REPO_IMG}/${REPO_IMG}" \
+  --sort-by=~UPDATE_TIME \
+  --limit=20 \
+  --format="table(UPDATE_TIME, TAG, DIGEST)"
+
+gcloud artifacts docker images describe \
+  "${REGION}-docker.pkg.dev/${PROJECT}/${REPO_IMG}/${REPO_IMG}:${TAG}" \
+  --format="json(image_summary.digest,image_summary.create_time)"
 ```
 ### 7.2.A TAG 及 IMAGE 設置
 ```bash
@@ -213,19 +215,19 @@ echo "$IMAGE"
 gcloud artifacts docker images list   "$REGION-docker.pkg.dev/$PROJECT/$REPO_IMG"   --include-tags   --filter='TAGS!=""'   --sort-by=~CREATE_TIME   --limit=10   --format='table(CREATE_TIME, TAGS, DIGEST)'
 
 # 設定最新的 DIGEST
-export DIGEST="sha256:153680956a35e591406758d2e005a3ccae2abac2c0e865bd0404a5e3c4dc59b6"
+export DIGEST=<剛剛查詢到的最新 DIGEST>
 
 # 再設定要補上的 tag
 export TAG="$(date +%Y%m%d-%H%M)"
 
 # 確認一下
-echo "$DIGES"
-echo "$TAG"
+echo "DIGEST=$DIGEST"
+echo "TAG=$TAG"
 
-# 最後就成功的幫 DIGEST 補上 TAG
+# 最後幫 DIGEST 補上 TAG
 gcloud artifacts docker tags add \
-  "$REGION-docker.pkg.dev/$PROJECT/$REPO_IMG/$REPO_IMG@$DIGEST" \
-  "$REGION-docker.pkg.dev/$PROJECT/$REPO_IMG/$REPO_IMG:$TAG"
+  "asia-southeast1-docker.pkg.dev/factgraph-38be7/factgraph-backend/factgraph-backend@${DIGEST}" \
+  "asia-southeast1-docker.pkg.dev/factgraph-38be7/factgraph-backend/factgraph-backend:${TAG}"
 ```
 
 ### 7.3 執行部署

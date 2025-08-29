@@ -1,7 +1,5 @@
-# -*- coding: utf-8 -*-
 """
-RAG-LLM 設定與工具（僅讀專案根 .env）
-- 直接載入專案根目錄的 .env（需至少含 GPT_API 與 GPT_MODEL）
+RAG-LLM 設定與工具（.env 可選；雲端優先讀環境變數）
 """
 
 from __future__ import annotations
@@ -11,21 +9,27 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Tuple
-from dotenv import load_dotenv
+
+# .env -> 本機開發方便；雲端沒有也沒關係
+try:
+    from dotenv import load_dotenv  # type: ignore
+except Exception:
+    load_dotenv = None  # 雲端沒裝也無妨
 
 # ──────────────────────────────────────────────────────────────────────────────
-# .env 載入（專案根目錄）
+# .env（可選，不存在就略過）
 # ──────────────────────────────────────────────────────────────────────────────
 GLOBAL_ENV = Path(".env").resolve()
-if GLOBAL_ENV.exists():
+if load_dotenv and GLOBAL_ENV.exists():
     load_dotenv(dotenv_path=str(GLOBAL_ENV), override=True)
-else:
-    raise FileNotFoundError(f"找不到專案根目錄的 .env: {GLOBAL_ENV}")
+elif load_dotenv:
+    # 允許往上尋找或當前目錄的 .env；若仍沒有就忽略
+    load_dotenv(override=True)
 
 ENCODING = "utf-8-sig"
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 專案路徑
+# 專案路徑（維持相對目錄，因為 pipeline 會以專案根為 cwd 執行）
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -50,8 +54,13 @@ class Paths:
 
 @dataclass(frozen=True)
 class Models:
-    api_key: str = os.getenv("GPT_API") or os.getenv(
-        "OPENAI_API") or os.getenv("OPENAI_API_KEY") or ""
+    # 你現在用的是 GPT_API，這裡同時容忍 OPENAI_API / OPENAI_API_KEY
+    api_key: str = (
+        os.getenv("GPT_API")
+        or os.getenv("OPENAI_API")
+        or os.getenv("OPENAI_API_KEY")
+        or ""
+    )
     rag_model: str = os.getenv("GPT_MODEL", "gpt-4.1")
     keywords_model: str = os.getenv(
         "KEYWORDS_MODEL", os.getenv("GPT_MODEL", "gpt-4.1"))
@@ -60,10 +69,11 @@ class Models:
 PATHS = Paths()
 MODELS = Models()
 
+# 雲端沒有 .env 也沒關係；但真的少金鑰才報錯
 if not MODELS.api_key:
-    raise RuntimeError("未設定 API Key：請在專案根目錄 .env 填入 GPT_API 或 OPENAI_API_KEY")
-if not MODELS.rag_model:
-    raise RuntimeError("未設定 GPT 模型：請在專案根目錄 .env 填入 GPT_MODEL")
+    raise RuntimeError(
+        "未設定 API Key：請在 Cloud Run 服務環境變數或 .env 填入 GPT_API / OPENAI_API_KEY"
+    )
 
 # ──────────────────────────────────────────────────────────────────────────────
 # OpenAI 客戶端
@@ -71,19 +81,19 @@ if not MODELS.rag_model:
 
 
 def make_openai_client():
-    """Responses / Vector Store 等新 SDK 客戶端"""
-    from openai import OpenAI
+    """OpenAI Responses / Vector Store 等官方 SDK 客戶端"""
+    from openai import OpenAI  # pip install openai
     return OpenAI(api_key=MODELS.api_key)
 
 
 def configure_legacy_openai_module():
-    """部分舊檔若還使用 openai.ChatCompletion，可呼叫本函式先設定 api_key"""
+    """若舊程式仍用 openai.ChatCompletion，先設定 api_key。"""
     import openai  # type: ignore
     openai.api_key = MODELS.api_key
     return openai
 
 # ──────────────────────────────────────────────────────────────────────────────
-# I/O 與通用工具
+# I/O 與通用工具（原樣保留）
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -142,10 +152,6 @@ def latest_keywords_json() -> Path:
 
 
 def get_latest_vector_store_id() -> str:
-    """
-    若仍需讀本機最新 VS id（例如其他工具腳本），可使用此函式。
-    注意：RAG 主流程已改為優先使用線上最新 VS，是否使用本地 id 取決於上層邏輯。
-    """
     files = list(PATHS.RAG_ID_DIR.glob("*"))
     if not files:
         raise FileNotFoundError(f"找不到任何 RAG id 檔於 {PATHS.RAG_ID_DIR}")
@@ -153,19 +159,14 @@ def get_latest_vector_store_id() -> str:
     return read_text(latest).strip()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 分類工具：classify_kind（長篇問題 / 短問句）
+# 分類工具（原樣保留）
 # ──────────────────────────────────────────────────────────────────────────────
 
 
 def _heuristic_classify(text: str) -> Tuple[str, str]:
-    """
-    回傳 (type, reason)：
-      type ∈ {"長篇問題", "短問句"}
-    """
     t = (text or "").strip()
     if not t:
         return "短問句", "空字串或極短輸入"
-    # 啟發式：長度、換行、句點/頓號數量
     long_threshold = 180
     many_breaks = t.count("\n") >= 3
     many_punct = sum(t.count(x)
@@ -176,12 +177,6 @@ def _heuristic_classify(text: str) -> Tuple[str, str]:
 
 
 def classify_kind(client, model: str, user_text: str) -> Tuple[str, str]:
-    """
-    使用 PROMPT_CLASSIFY 呼叫 Responses 進行分類；若解析失敗則退回啟發式。
-    回傳 (type, reason)：
-      type ∈ {"長篇問題", "短問句"}
-      reason：模型輸出或 fallback 原因
-    """
     prompt_path = PATHS.PROMPT_CLASSIFY
     if not prompt_path.exists():
         return _heuristic_classify(user_text)
@@ -213,9 +208,6 @@ def classify_kind(client, model: str, user_text: str) -> Tuple[str, str]:
 
 
 def find_single_txt_or_error(root: Path) -> Path:
-    """
-    僅允許目錄內存在「唯一」.txt；否則報錯（給 annex 用）。
-    """
     files = sorted(root.glob("*.txt"))
     if not files:
         raise FileNotFoundError(f"找不到任何 .txt：{root}/*.txt")
@@ -227,38 +219,16 @@ def find_single_txt_or_error(root: Path) -> Path:
 
 
 def ensure_annex_list(keywords_payload: Any, annex_head: dict) -> List[Any]:
-    """
-    產出 annex 目標結構（list）：
-      [
-        {"user_question": "..."},
-        <keywords_payload 的合理展開>
-      ]
-    - dict → [head, dict]
-    - list(長度=1且首元素為dict) → [head, list[0]]
-    - list(其他) → [head] + list
-    - 其他型別（str/數值）→ [head, {"raw": 原值}]
-    """
-    # 標準化 payload
     if isinstance(keywords_payload, dict):
-        tail = keywords_payload
-        return [annex_head, tail]
-
+        return [annex_head, keywords_payload]
     if isinstance(keywords_payload, list):
         if len(keywords_payload) == 1 and isinstance(keywords_payload[0], dict):
             return [annex_head, keywords_payload[0]]
-        # 多元素：直接併上
         return [annex_head] + keywords_payload
-
-    # 其餘型別包成 raw
     return [annex_head, {"raw": keywords_payload}]
 
 
 def build_kw_annex_output_name(kw_path: Path) -> Path:
-    """
-    由 <stem>_keywords.json 推導成 <stem>_kw_annex.json。
-    若不是標準命名，則一律接尾 _kw_annex.json。
-    僅回傳「同層」檔名，呼叫端可再轉置到固定輸出資料夾。
-    """
     name = kw_path.name
     suffix = "_keywords.json"
     if name.endswith(suffix):
