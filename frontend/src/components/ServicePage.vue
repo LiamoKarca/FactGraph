@@ -28,9 +28,9 @@
         <span class="menu-bar"></span>
       </button>
       <nav class="menu-dropdown" :class="{ show: showMenu }" ref="menu">
-        <a href="#">首頁</a>
-        <a href="#">服務介紹</a>
-        <a href="#">關於我們</a>
+        <a href="/">首頁</a>
+        <a href="/service">服務介紹</a>
+        <a href="/about">關於我們</a>
       </nav>
     </div>
   </header>
@@ -83,6 +83,7 @@
         >
           {{ loading ? '調查中…' : '開始查核' }}
         </button>
+
       </div>
     </div>
 
@@ -168,7 +169,7 @@ let errorTimeout = null
 const placeholderText = computed(() => {
   switch (tabType.value) {
     case 'rag':
-      return '請輸入任何關於臺灣的社會、政治問題，或新聞文案...'
+      return '臺灣的任何社會、政治問題，或新聞文案...'
     case 'writing':
       return '請輸入完整新聞文案...'
     case 'question':
@@ -478,4 +479,42 @@ async function validateAndQuery() {
 .fade-enter-from, .fade-leave-to {
   opacity: 0;
 }
+
+/* 手機板按鈕置中修正（不改 template） */
+@media (max-width: 480px) {
+  #query-btn {
+    display: flex;                 /* 讓內容可水平/垂直置中 */
+    align-items: center;
+    justify-content: center;
+
+    width: clamp(220px, 92vw, 360px);  /* 自適應寬度，避免看起來偏左 */
+    max-width: 100%;
+    margin: 12px auto 0;           /* 水平置中 */
+    box-sizing: border-box;
+
+    /* 防干擾：若父層是 flex / 有 float / 絕對定位 */
+    align-self: center !important;
+    float: none !important;
+    position: static !important;
+    text-align: center;
+  }
+}
+
+/* 手機小螢幕：縮小「第一個輸入框」（非日期）的字與 placeholder，避免吃字 */
+@media (max-width: 420px) {
+  .input-group > input[type="text"]:not(.date-input) {
+    font-size: clamp(13px, 3.6vw, 16px);
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .input-group > input[type="text"]:not(.date-input)::placeholder {
+    font-size: clamp(11px, 3.2vw, 14px);
+    letter-spacing: .2px;
+  }
+  /* 兼容部分行動瀏覽器 */
+  .input-group > input[type="text"]:not(.date-input)::-webkit-input-placeholder { font-size: clamp(11px, 3.2vw, 14px); }
+  .input-group > input[type="text"]:not(.date-input):-ms-input-placeholder     { font-size: clamp(11px, 3.2vw, 14px); }
+  .input-group > input[type="text"]:not(.date-input)::-moz-placeholder        { font-size: clamp(11px, 3.2vw, 14px); opacity:1; }
+}
+
 </style>
