@@ -114,12 +114,16 @@ def _count_user_txts() -> int:
 
 def _validate_preconditions(plan: List[str]) -> None:
     if any(s in plan for s in ("annex", "gpt")):
+    # 若由上游指定了 RAG_USER_FILE，代表採用 job-scoped 輸入，跳過全域目錄檢查
+        if os.getenv("RAG_USER_FILE"):
+            print("✓ 檢查略過：偵測到 RAG_USER_FILE（job-scoped 輸入），不掃全域 user-input。")
+            return
+        # 舊邏輯：僅允許 USER_INPUT_DIR 內存在「唯一一個 .txt」
         n = _count_user_txts()
         if n == 0:
             raise SystemExit(f"[錯誤] 找不到任何 .txt：{PATHS.USER_INPUT_DIR}/*.txt")
         if n > 1:
-            raise SystemExit(
-                f"[錯誤] {PATHS.USER_INPUT_DIR} 內有多個 .txt（{n} 個），僅支援單一檔案")
+            raise SystemExit(f"[錯誤] {PATHS.USER_INPUT_DIR} 內有多個 .txt（{n} 個），僅支援單一檔案")
 
 
 def _run(script: Path, args: List[str] | None = None) -> int:

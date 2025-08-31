@@ -1,91 +1,127 @@
-"""
-功能：
-- 從 data/interim/rag_mode/user-input/ 取得「唯一」的 .txt 檔內容（若多於一個檔案會報錯）
-- 讀取 data/interim/rag_mode/keywords/ 內最新的 *_keywords.json
-- 產生 <stem>_kw_annex.json，內容為：
-  [
-    {"user_question": "<txt 檔內容>"},
-    <keywords.json 的原始內容或其第一層資料>
-  ]
-- 輸出固定寫入 data/interim/rag_mode/keywords/
-
-相依：
-- src/qa/rag_mode/config.py
-"""
-
 from __future__ import annotations
 
+import os
 import json
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from config import (
-    PATHS, ENCODING,
-    read_text, read_json, write_json,
-    find_single_txt_or_error, latest_keywords_json,
-    ensure_annex_list, build_kw_annex_output_name
+    PATHS,
+    read_text, write_text,
+    auto_find_latest_user_txt,  # 全域後備
 )
 
 
-def _normalize_keywords_payload(payload: Any) -> Any:
+def _latest(glob_iter) -> Optional[Path]:
+    try:
+        return sorted(glob_iter, key=lambda p: p.stat().st_mtime, reverse=True)[0]
+    except Exception:
+        return None
+
+
+def _ensure_list(x: Any):
+    if x is None:
+        return []
+    if isinstance(x, list):
+        return x
+    return [x]
+
+
+def _normalize_keywords_payload(payload: Any) -> dict:
     """
-    關鍵詞檔可能是：
-    - 合法 JSON（list/dict）
-    - 或單純是一段可被解析的 JSON 文字
-    - 或單純是字串（模型未嚴格輸出 JSON）
-    這裡盡量轉為 JSON；若失敗則包在字串中回傳。
+    將 keywords 檔整理為標準欄位（dict）：
+    - 支援 dict / list / str；盡量取出 entities/events/dates/numbers/focus
+    - 不存在則給空陣列
     """
-    if isinstance(payload, (dict, list)):
-        return payload
+    obj = payload
+    if isinstance(obj, str):
+        try:
+            obj = json.loads(obj)
+        except Exception:
+            obj = {}
 
-    if isinstance(payload, str):
-        txt = payload.strip()
-        # 嘗試抓到首尾 JSON 區塊
-        js, je = txt.find("{"), txt.rfind("}")
-        ls, le = txt.find("["), txt.rfind("]")
-        try_spans = []
-        if 0 <= js < je:
-            try_spans.append((js, je + 1))
-        if 0 <= ls < le:
-            try_spans.append((ls, le + 1))
+    # keywords 可能是 list（例如模型輸出陣列），嘗試抓第一個 dict
+    if isinstance(obj, list):
+        head = next((x for x in obj if isinstance(x, dict)), {})
+        obj = head if isinstance(head, dict) else {}
 
-        for s, e in try_spans:
-            try:
-                return json.loads(txt[s:e])
-            except Exception:
-                pass
-        # 最後仍解析不了就原樣回傳字串
-        return txt
+    if not isinstance(obj, dict):
+        obj = {}
 
-    return payload
+    return {
+        "entities": _ensure_list(obj.get("entities")),
+        "events":   _ensure_list(obj.get("events")),
+        "dates":    _ensure_list(obj.get("dates")),
+        "numbers":  _ensure_list(obj.get("numbers")),
+        "focus":    _ensure_list(obj.get("focus")),
+    }
 
 
 def main() -> None:
-    # 1) 嚴格只允許一個 user-input txt
-    txt_path = find_single_txt_or_error(PATHS.USER_INPUT_DIR)
-    txt_content = read_text(txt_path).strip()
+    # 1) 讀取「本次 job」的 user 輸入（優先）；否則落回全域最新
+    env_user = os.getenv("RAG_USER_FILE")
+    if env_user:
+        user_path = Path(env_user)
+        if not user_path.exists():
+            raise SystemExit(f"[annex] RAG_USER_FILE 不存在：{user_path}")
+    else:
+        user_path = auto_find_latest_user_txt()
+    user_txt = (read_text(user_path) or "").strip()
+    if not user_txt:
+        raise SystemExit("[annex] 使用者輸入為空白")
 
-    # 2) 找到最新的 *_keywords.json
-    kw_path = latest_keywords_json()
-    raw_kw = read_text(kw_path)  # 保留原文以便 fallback
-    try:
-        kw_obj = read_json(kw_path)
-    except Exception:
-        kw_obj = raw_kw  # 非 JSON：保留字串，後續 _normalize_keywords_payload 會處理
+    # 2) 尋找「本次 job」的 keywords；若無 job，落回全域 keywords 目錄最新
+    job_dir = os.getenv("RAG_JOB_DIR")
+    if job_dir:
+        kw_dir = Path(job_dir) / "keywords"
+        kw_path = _latest(kw_dir.glob("*.json")) if kw_dir.exists() else None
+    else:
+        kw_dir = PATHS.KEYWORDS_DIR
+        kw_path = _latest(kw_dir.glob("*_keywords.json"))
 
-    kw_obj = _normalize_keywords_payload(kw_obj)
+    kw_obj: Any = {}
+    if kw_path and kw_path.exists():
+        try:
+            kw_obj = json.loads(read_text(kw_path))
+        except Exception:
+            kw_obj = read_text(kw_path)  # 交給 normalizer 處理
+    # 沒找到 keywords 也不視為錯誤 → clues 全空
 
-    # 3) annex head 與整併
-    annex_head = {"user_question": txt_content}
-    annex_obj = ensure_annex_list(kw_obj, annex_head)
+    clues = _normalize_keywords_payload(kw_obj)
 
-    # 4) 產生輸出檔名（<stem>_kw_annex.json），並固定輸出到 KEYWORDS_DIR
-    out_path = build_kw_annex_output_name(kw_path)
-    if out_path.parent != PATHS.KEYWORDS_DIR:
-        out_path = PATHS.KEYWORDS_DIR / out_path.name
+    # 3) 決定輸出位置與檔名（job 優先）
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    job_id = (os.getenv("RAG_JOB_ID") or "").strip()
+    if job_dir:
+        annex_dir = Path(job_dir) / "annex"
+    else:
+        annex_dir = PATHS.KEYWORDS_DIR  # 與既有相容
+    annex_dir.mkdir(parents=True, exist_ok=True)
 
-    write_json(out_path, annex_obj, ensure_ascii=False, indent=2)
-    print(f"[完成] {txt_path.name} + {kw_path.name} → {out_path}")
+    out_name = f"{job_id}_{ts}_annex.json" if job_id else f"{ts}_annex.json"
+    out_path = annex_dir / out_name
+
+    payload = {
+        "user_question": user_txt,
+        "entities": clues["entities"],
+        "events": clues["events"],
+        "dates": clues["dates"],
+        "numbers": clues["numbers"],
+        "focus": clues["focus"],
+    }
+    write_text(out_path, json.dumps(payload, ensure_ascii=False, indent=2))
+    print(f"[annex] Save: {out_path}")
+
+    # 另寫 latest pointer（便於 gpt_rag.py 以 job 搜尋 annex）
+    if job_id:
+        latest = annex_dir / f"{job_id}.json"
+        try:
+            write_text(latest, json.dumps(
+                payload, ensure_ascii=False, indent=2))
+            print(f"[annex] Latest pointer: {latest}")
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

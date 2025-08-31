@@ -1,12 +1,20 @@
 """
 RAG Mode – 嚴格吃 annex、完整展開 clues，並加入向量庫「輪詢檢查」避免時間差。
 策略：優先抓取「線上最新」向量庫（explicit > online）。若輪詢仍為空，回報「稍待幾分鐘後重試」並停止本次 RAG。
+
+【本版重點改動】
+1) 支援以環境變數覆寫「輸入/輸出」與命名：
+   - RAG_USER_FILE：指定本次 job 的使用者原始輸入檔（優先於 auto_find_latest_user_txt）
+   - RAG_OUT_DIR   ：指定輸出目錄；未提供時仍落在 PATHS.RAG_OUTDIR
+   - RAG_JOB_ID    ：若存在，輸出檔名改為「{job_id}_{YYYYmmdd-HHMMSS}_rag.*」並另寫 {job_id}.md 以利除錯
+2) 檔名時間戳提升到「秒」等級，避免覆蓋。
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -84,7 +92,27 @@ def _wait_nonempty_vector_store(client: OpenAI, vs_id: str, retries: int = 8, de
 # ──────────────────────────────────────────────────────────────────────────────
 # Annex 讀取與 user prompt 組裝（嚴格）
 # ──────────────────────────────────────────────────────────────────────────────
+# --- 優先找本 job 的 annex（環境變數 → job 目錄 → 全域） ----------------------
+from pathlib import Path
 
+def _auto_find_annex_job_first():
+    env_annex = os.getenv("RAG_ANNEX_FILE")
+    if env_annex:
+        p = Path(env_annex)
+        if p.exists():
+            return p
+
+    job_dir = os.getenv("RAG_JOB_DIR")
+    if job_dir:
+        annex_dir = Path(job_dir) / "annex"
+        if annex_dir.exists():
+            cands = sorted(annex_dir.glob("*_annex.json"),
+                           key=lambda p: p.stat().st_mtime, reverse=True)
+            if cands:
+                return cands[0]
+
+    # 後備：沿用既有的全域尋檔策略
+    return auto_find_annex()
 
 def _load_annex_strict(p: Path) -> Tuple[str, Dict[str, Any], Dict[str, int]]:
     raw = read_text(p)
@@ -257,23 +285,59 @@ def _extract_output_text(resp) -> str:
 
 
 def _save_outputs(answer_text: str, meta: Dict[str, Any]) -> None:
-    ts = datetime.now().strftime("%Y%m%d-%H%M")
-    out_json = PATHS.RAG_OUTDIR / f"{ts}_rag.json"
-    out_md = PATHS.RAG_OUTDIR / f"{ts}_rag.md"
-    PATHS.RAG_OUTDIR.mkdir(parents=True, exist_ok=True)
+    """
+    儲存輸出檔案：
+    1) 優先使用環境變數 RAG_OUT_DIR 作為輸出目錄（job-scoped）
+    2) 檔名改到「秒」，並加上 job_id 前綴：{job_id}_{YYYYmmdd-HHMMSS}_rag.*
+    3) 另寫一份穩定檔名 {job_id}.md 以利除錯（若 job_id 存在）
+    4) 若無環境變數，退回舊邏輯（寫到 PATHS.RAG_OUTDIR；檔名仍為「秒」以避免覆蓋）
+    """
+    out_dir = Path(os.getenv("RAG_OUT_DIR") or PATHS.RAG_OUTDIR)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    job = os.getenv("RAG_JOB_ID", "").strip()
+
+    if job:
+        out_json = out_dir / f"{job}_{ts}_rag.json"
+        out_md = out_dir / f"{job}_{ts}_rag.md"
+        latest_md = out_dir / f"{job}.md"
+    else:
+        out_json = out_dir / f"{ts}_rag.json"
+        out_md = out_dir / f"{ts}_rag.md"
+        latest_md = None
+
     payload = {"answer": answer_text, "meta": meta}
     write_text(out_json, json.dumps(payload, ensure_ascii=False, indent=2))
     write_text(out_md, answer_text)
+    if latest_md:
+        try:
+            write_text(latest_md, answer_text)
+        except Exception:
+            # latest 寫入失敗不阻斷主流程
+            pass
+
     print(f"[Save] {out_json}")
     print(f"[Save] {out_md}")
+    if latest_md:
+        print(f"[Save] {latest_md} (latest pointer)")
 
 
 def main() -> None:
     args = parse_args()
     client = make_openai_client()
 
-    # 1) 讀最新 user 文本（只用於分類）
-    user_txt_path = auto_find_latest_user_txt()
+    # 1) 讀 user 文本（優先 job-scoped：RAG_USER_FILE）
+    env_user_file = os.getenv("RAG_USER_FILE")
+    if env_user_file:
+        user_txt_path = Path(env_user_file)
+        if not user_txt_path.exists():
+            raise FileNotFoundError(f"RAG_USER_FILE 指定的檔案不存在：{user_txt_path}")
+        print(f"▶ 使用 job-scoped user input：{user_txt_path}")
+    else:
+        user_txt_path = auto_find_latest_user_txt()
+        print(f"▶ 使用全域最新 user input：{user_txt_path}")
+
     user_txt = read_text(user_txt_path)
 
     # 2) 分類決定 Prompt
@@ -283,8 +347,8 @@ def main() -> None:
         raise FileNotFoundError(f"找不到對應 Prompt：{prompt_path}")
     sys_prompt = read_text(prompt_path)
 
-    # 3) annex → 完整 user prompt + 檢索提示
-    annex_path = auto_find_annex()
+    # 3) annex → 完整 user prompt + 檢索提示（嚴格）
+    annex_path = _auto_find_annex_job_first()
     user_question, clues, stats = _load_annex_strict(annex_path)
     user_prompt = _render_user_prompt(user_question, clues)
     seed_queries = _build_seed_queries(clues, max_queries=15)
@@ -313,6 +377,7 @@ def main() -> None:
             "annex_stats": _meta_str(stats),
             "user_preview": _meta_str(user_question[:200]),
             "seed_queries": _meta_str(seed_queries),
+            "job_id": os.getenv("RAG_JOB_ID", "").strip(),
         },
     )
 
@@ -333,6 +398,9 @@ def main() -> None:
         "user_question_preview": user_question[:200],
         "user_prompt_len": len(user_prompt),
         "seed_queries": seed_queries,
+        "job_id": os.getenv("RAG_JOB_ID", "").strip(),
+        "out_dir": str(Path(os.getenv("RAG_OUT_DIR") or PATHS.RAG_OUTDIR)),
+        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
     _save_outputs(answer_text, meta)
 

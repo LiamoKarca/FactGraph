@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import uuid
+import logging
 from pathlib import Path
 from typing import Literal
 
 import firebase_admin
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
 from firebase_admin import credentials, firestore
@@ -47,6 +48,36 @@ app.include_router(health.router, prefix="/api")
 app.include_router(verifier.router, prefix="/api")
 app.include_router(answerer.router, prefix="/api")
 app.include_router(rag_mode.router, prefix="/api")
+
+# ── Access Log Middleware：使用 uvicorn.access（內建 AccessFormatter） ────────────
+_access_logger = logging.getLogger("uvicorn.access")
+
+
+@app.middleware("http")
+async def access_log_middleware(request: Request, call_next):
+    response = await call_next(request)
+
+    client = request.client
+    client_host = client.host if client else "testclient"
+    client_port = client.port if client else 0
+
+    method = request.method
+    path = request.url.path
+    query = request.url.query
+    full_path = f"{path}?{query}" if query else path
+    http_ver = request.scope.get("http_version", "1.1")
+    status = response.status_code
+
+    # 依 uvicorn AccessFormatter 規格：args 必須為 (client, method, full_path, http_ver, status)
+    _access_logger.info(
+        '%s - "%s %s HTTP/%s" %s',
+        f"{client_host}:{client_port}",
+        method,
+        full_path,
+        http_ver,
+        status,
+    )
+    return response
 
 # ── Firebase Admin SDK 初始化 (Admin SDK 不受安全規則限制) ─────────────────────────────
 cred = credentials.Certificate(str(KEY_PATH))
@@ -107,10 +138,10 @@ def process_task(job_id: str, url: str, mode: str, date: str):
             }
 
         else:  # mode == "rag"
-            # ── 這裡是唯一改動重點 ────────────────────────────────────────
-            # 呼叫同步 RAG 端點（rag_mode.py 會在產出為空/錯誤時回 500）:contentReference[oaicite:2]{index=2}
-            resp = sync_client.post("/api/rag_mode/query", files=files)
-
+            # 呼叫同步 RAG 端點（rag_mode.py 會在產出為空/錯誤時回 500）
+            # 傳入 job_id，讓後端以 job-scoped workspace 並行處理
+            resp = sync_client.post(
+                f"/api/rag_mode/query?job_id={job_id}", files=files)
             # 非 200 → 標記 FAILED + last_error
             if resp.status_code != 200:
                 err_msg = ""
@@ -160,6 +191,14 @@ def process_task(job_id: str, url: str, mode: str, date: str):
         # 統一寫入並標記完成
         doc_ref.update(update_fields)
         doc_ref.update({"status": "DONE"})
+
+        # 若為 RAG，於 Firestore 成功寫入並標記 DONE 後，再清理該 job 的原始輸入
+        if mode == "rag":
+            try:
+                _ = sync_client.post(f"/api/rag_mode/cleanup?job_id={job_id}")
+            except Exception as e:
+                # 清理失敗不影響主流程；記錄警告供追蹤
+                print(f"[WARN] cleanup job {job_id} failed: {e}")
 
     except Exception as e:
         print(f"[process_task] EXCEPTION job_id={job_id}: {e}")
