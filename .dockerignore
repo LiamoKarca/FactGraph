@@ -26,3 +26,7 @@ src/knowledge_base_operation/
 # Webdriver Manager 快取
 .wdm-cache/  
 .wdm/        
+
+# ckip ws
+models/CKIP/ws
+models/CKIP/xet

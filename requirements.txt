@@ -117,3 +117,5 @@ webdriver-manager==4.0.2
 websocket-client==1.8.0
 websockets==15.0.1
 wsproto==1.2.0
+ckip-transformers==0.3.4
+hf_transfer==0.1.9

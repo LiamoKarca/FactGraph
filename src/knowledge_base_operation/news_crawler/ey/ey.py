@@ -18,6 +18,8 @@ import argparse
 import json
 import random
 import time
+import os
+
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
@@ -58,18 +60,47 @@ class Article:
 # -------------------------- 路徑/IO --------------------------
 
 
-def find_project_root(marker: str = "data") -> Path:
-    """自此檔一路往上找，直到找到含 marker 子目錄；找不到則回傳 CWD。"""
+def find_project_root() -> Path:
+    """
+    專案根定位：
+    1) 先採用 PROJECT_ROOT 或 DATA_ROOT（只要求其下有 data/）
+    2) 再自此檔一路往上，優先挑同時具有 data/ 與 專案標記(.git 或 pyproject.toml) 的父層
+    3) 若無專案標記，選「路徑上最上層」帶 data/ 的父層
+    4) 全部沒有就回 CWD
+    """
+    # 1) 環境變數
+    env_root = os.environ.get("PROJECT_ROOT") or os.environ.get("DATA_ROOT")
+    if env_root:
+        root = Path(env_root).resolve()
+        if (root / "data").is_dir():
+            return root
+
+    # 2) 往上尋找：優先帶 data/ + 專案標記
     here = Path(__file__).resolve()
+    topmost_with_data = None
     for parent in [here] + list(here.parents):
-        if (parent / marker).exists():
-            return parent
-    return Path.cwd()
+        has_data = (parent / "data").is_dir()
+        if has_data:
+            topmost_with_data = parent  # 不斷覆寫，最終會是「最上層」帶 data/ 的父層
+            has_marker = (parent / ".git").is_dir() or (parent /
+                                                        "pyproject.toml").is_file()
+            if has_marker:
+                return parent
+
+    # 3) 無專案標記：退回「最上層」帶 data/ 的父層
+    if topmost_with_data:
+        return topmost_with_data
+
+    # 4) 實在找不到，回 CWD
+    return Path.cwd().resolve()
 
 
 def output_path() -> Path:
-    """相對路徑：data/raw/news/ey/ey_news.json"""
-    root = find_project_root("data")
+    """
+    固定輸出到：<project_root>/data/raw/news/ey/ey_news.json
+    （project_root 由 find_project_root() 決定）
+    """
+    root = find_project_root()
     out = root / "data" / "raw" / "news" / "ey" / "ey_news.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     return out
