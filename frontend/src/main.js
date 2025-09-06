@@ -4,8 +4,12 @@ import App from './App.vue'
 
 // 引入 firebase.js（初始化）＆ router
 import { router } from "./router";
-import "./firebase";        // 確保 firebase.js 執行一次
+import "./firebase";        // 確保 firebase.js 執行一次.
 
+// 本地開發時，載入測試環境設定
+if (import.meta.env.DEV) {
+  import("./testEnv.js");
+}
 
 // ── 初始化 Vue 應用 ──
 createApp(App)

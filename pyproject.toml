@@ -1,16 +1,87 @@
 [tool.poetry]
-name = "fastapi-backend"
+name = "factgraph"
 version = "0.1.0"
-description = "Firstproject creation."
-authors = ["LiamoKarca <karca5103@gmail.com>"]
+description = "FactGraph: LLM × 知識圖譜(Neo4j) × 向量檢索的查核/問答平台"
+authors = ["LiamoKarca"]
 readme = "README.md"
+packages = [{ include = "src" }]
 
 [tool.poetry.dependencies]
-python = "3.12.3"
-fastapi = "^0.116.0"
-uvicorn = {extras = ["standard"], version = "^0.35.0"}
+python = ">=3.11,<3.13"
 
+# --- Web / API ---
+fastapi = "0.116.0"
+starlette = "0.46.2"
+uvicorn = { version = "0.35.0", extras = ["standard"] }
+
+# --- Cloud / DB ---
+firebase-admin = "7.0.0"
+neo4j = "5.28.1"
+
+# --- LLM / NLP / ML ---
+openai = "1.93.3"
+sentence-transformers = "5.0.0"
+transformers = "4.53.1"
+tokenizers = "0.21.2"
+torch = "2.7.1"  # 由 GPU 群組提供 CUDA 12.6 動態庫
+scikit-learn = "1.7.0"
+scipy = "1.16.0"
+numpy = "2.3.1"
+pandas = "2.3.1"
+huggingface-hub = "0.33.2"
+ckip-transformers = "0.3.4"
+hf_transfer = "0.1.9"
+
+# --- Utilities / IO ---
+httpx = "0.28.1"
+requests = "2.32.4"
+python-dotenv = "1.1.1"
+python-multipart = "0.0.20"
+Jinja2 = "3.1.6"
+regex = "2024.11.6"
+pillow = "11.3.0"
+tqdm = "4.67.1"
+networkx = "3.5"
+python-dateutil = "2.9.0.post0"
+pytz = "2025.2"
+watchfiles = "1.1.0"
+
+# --- Crawlers ---
+selenium = "4.34.2"
+webdriver-manager = "4.0.2"
+beautifulsoup4 = "4.13.4"
+
+# --- Platform niceties ---
+pydantic = "2.11.7"
+jiter = "0.10.0"
+uvloop = { version = "0.21.0", markers = "sys_platform != 'win32'" }
+
+# =========================
+# 預設啟用：GPU (CUDA 12.6)
+# =========================
+# 使用 PyTorch 的「解耦式 CUDA 套件」：在 Linux x86_64 會自動拉下 CUDA 12.6 相關 nvidia-* 套件與 Triton。
+# 若你的環境不是 Linux x86_64，請改用 `poetry install --without gpu` 走 CPU。
+[tool.poetry.group.gpu.dependencies]
+nvidia-cublas-cu12       = { version = "12.6.4.1", markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
+nvidia-cuda-cupti-cu12   = { version = "12.6.80",  markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
+nvidia-cuda-nvrtc-cu12   = { version = "12.6.77",  markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
+nvidia-cuda-runtime-cu12 = { version = "12.6.77",  markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
+nvidia-cudnn-cu12        = { version = "9.5.1.17", markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
+nvidia-cufft-cu12        = { version = "11.3.0.4", markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
+nvidia-cufile-cu12       = { version = "1.11.1.6", markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
+nvidia-curand-cu12       = { version = "10.3.7.77",markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
+nvidia-cusolver-cu12     = { version = "11.7.1.2", markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
+nvidia-cusparse-cu12     = { version = "12.5.4.2", markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
+nvidia-cusparselt-cu12   = { version = "0.6.3",    markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
+nvidia-nccl-cu12         = { version = "2.26.2",   markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
+nvidia-nvjitlink-cu12    = { version = "12.6.85",  markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
+nvidia-nvtx-cu12         = { version = "12.6.77",  markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
+triton                   = { version = "3.3.1",    markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
+
+[tool.poetry.group.dev.dependencies]
+pytest = "8.4.1"
+pytest-asyncio = "1.0.0"
 
 [build-system]
-requires = ["poetry-core"]
+requires = ["poetry-core>=1.9.0"]
 build-backend = "poetry.core.masonry.api"

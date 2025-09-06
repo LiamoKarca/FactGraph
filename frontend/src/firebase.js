@@ -8,14 +8,15 @@ import {
 } from "firebase/firestore";
 
 // ② 貼上從 Console 複製的 Web App config
+// 或將 frontend/.env.local 進行設置
 const firebaseConfig = {
-  apiKey:            "AIzaSyBwNIB5dukrM1rWeuu2bjEitJKSut9chg0",
-  authDomain:        "factgraph-38be7.firebaseapp.com",
-  projectId:         "factgraph-38be7",
-  storageBucket:     "factgraph-38be7.firebasestorage.app",
-  messagingSenderId: "671154684730",
-  appId:             "1:671154684730:web:94c81f0af3589fc603",
-  measurementId:     "G-YGF3FZ1SG3"
+  apiKey:            import.meta.env.VITE_FB_API_KEY,
+  authDomain:        import.meta.env.VITE_FB_AUTH_DOMAIN,
+  projectId:         import.meta.env.VITE_FB_PROJECT_ID,
+  storageBucket:     import.meta.env.VITE_FB_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FB_MESSAGING_SENDER_ID,
+  appId:             import.meta.env.VITE_FB_APP_ID,
+  measurementId:     import.meta.env.VITE_FB_MEASUREMENT_ID,
 };
 
 // ③ 初始化 Firebase App
