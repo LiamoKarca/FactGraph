@@ -13,6 +13,7 @@
 * [資料夾結構](#資料夾結構)
 * [API 概覽](#api-概覽)
 * [Docker 部署](#docker-部署)
+* [團隊與夥伴](#團隊與夥伴)
 * [貢獻指南](#貢獻指南)
 * [授權](#授權)
 
@@ -53,7 +54,7 @@ Backend (FastAPI)                              Frontend (Vue 3 + Vite)
                ├─ answerer/
                └─ rag_mode/
 ```
-> 更多技術說明詳見 TechnicalWhitepaper.md
+> 更多技術說明詳見 **TechnicalWhitepaper.md**
 
 ---
 
@@ -174,8 +175,25 @@ uvicorn src.web.main:app --reload --host 0.0.0.0 --port 8080
 * **base stage**：建立虛擬環境並安裝依賴
 * **runtime stage**：複製模型及程式碼，以非 root 使用者執行
 
-> 更完整的本地建置及雲端部署流程之操作，說明文件詳見 DEPLOYMENT.md
+> 更完整的本地建置及雲端部署流程之操作，說明文件詳見 **DEPLOYMENT.md**
 
+---
+---
+
+## 團隊與夥伴
+**學校｜系所**
+
+> 國立屏東科技大學｜資訊管理系
+
+**指導教授**  
+> 陳灯能 老師  
+
+**專案成員** 
+```
+B11156007 張宏瑋｜前端切版、美術設計
+B11156057 賴彥霖｜前端 & 後端設計、整合與部署
+B11156039 黃品翰｜文書處理
+```
 ---
 
 ## 貢獻指南
