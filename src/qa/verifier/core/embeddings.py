@@ -1,8 +1,3 @@
-# Decompiled with PyLingual (https://pylingual.io)
-# Internal filename: /home/karca5103/dev/FactGraph/src/qa/verifier/core/embeddings.py
-# Bytecode version: 3.12.0rc2 (3531)
-# Source timestamp: 2025-07-04 07:57:48 UTC (1751615868)
-
 """
 CKIP SBERT 載入與文字向量化
 """

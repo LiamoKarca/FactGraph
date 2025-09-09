@@ -1,8 +1,3 @@
-# Decompiled with PyLingual (https://pylingual.io)
-# Internal filename: /home/karca5103/dev/FactGraph/src/qa/verifier/llm/extract.py
-# Bytecode version: 3.12.0rc2 (3531)
-# Source timestamp: 2025-07-04 08:02:47 UTC (1751616167)
-
 """
 _gpt_extract 包裝
 """

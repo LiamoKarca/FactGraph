@@ -1,8 +1,3 @@
-# Decompiled with PyLingual (https://pylingual.io)
-# Internal filename: /home/karca5103/dev/FactGraph/src/qa/verifier/core/dedup.py
-# Bytecode version: 3.12.0rc2 (3531)
-# Source timestamp: 2025-07-04 07:57:23 UTC (1751615843)
-
 """
 語意去重
 """

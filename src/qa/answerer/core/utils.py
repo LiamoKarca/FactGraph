@@ -1,8 +1,3 @@
-# Decompiled with PyLingual (https://pylingual.io)
-# Internal filename: /home/karca5103/dev/FactGraph/src/qa/answerer/core/utils.py
-# Bytecode version: 3.12.0rc2 (3531)
-# Source timestamp: 2025-07-01 14:56:43 UTC (1751381803)
-
 from __future__ import annotations
 
 import json

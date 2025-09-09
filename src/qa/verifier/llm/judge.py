@@ -1,8 +1,3 @@
-# Decompiled with PyLingual (https://pylingual.io)
-# Internal filename: /home/karca5103/dev/FactGraph/src/qa/verifier/llm/judge.py
-# Bytecode version: 3.12.0rc2 (3531)
-# Source timestamp: 2025-07-04 08:03:02 UTC (1751616182)
-
 """
 gpt_judge 包裝
 """

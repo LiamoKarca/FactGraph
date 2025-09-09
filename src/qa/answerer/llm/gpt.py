@@ -1,8 +1,3 @@
-# Decompiled with PyLingual (https://pylingual.io)
-# Internal filename: /home/karca5103/dev/FactGraph/src/qa/answerer/llm/gpt.py
-# Bytecode version: 3.12.0rc2 (3531)
-# Source timestamp: 2025-07-01 14:12:47 UTC (1751379167)
-
 from __future__ import annotations
 
 import time

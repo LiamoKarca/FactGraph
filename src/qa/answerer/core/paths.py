@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 集中管理 answerer 子套件所需的路徑常數。
 

@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 新聞事實驗證主流程 Pipeline
 
@@ -9,6 +7,15 @@
 """
 
 from __future__ import annotations
+from ..tools import kg_nl as knl
+from ..tools import data_utils as du
+from .llm.judge import judge_news_kb
+from .llm.extract import extract_entities_relations
+from .kg.search import cosine_search, kg_row_to_detail
+from .core.paths import USER_INPUT_DIR, VEC_DIR, RES_DIR
+from .core.embeddings import embed_text, embed_triple
+from .core.dedup import deduplicate
+from .core.config import LLM_ROUNDS
 
 import argparse
 import gc
@@ -16,26 +23,64 @@ import json
 import re
 import sys
 import time
-from typing import List
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 from tqdm import tqdm
+from dotenv import load_dotenv
 
-from .core.config import LLM_ROUNDS
-from .core.dedup import deduplicate
-from .core.embeddings import embed_text, embed_triple
-from .core.paths import USER_INPUT_DIR, VEC_DIR, RES_DIR
-from .kg.search import cosine_search, kg_row_to_detail
-from .llm.extract import extract_entities_relations
-from .llm.judge import judge_news_kb
-from ..tools import data_utils as du
-from ..tools import kg_nl as knl
+load_dotenv()
+
+
+# ────────────────────────── 抽取相容轉換 ──────────────────────────
+def _er_to_triples(data: Dict[str, Any]) -> List[du.Triple]:
+    """
+    將新的抽取輸出（entities + relations）轉為舊介面的三元組：
+      [{'head': <name>, 'relation': <str>, 'tail': <name>}]
+
+    - relation.source/target 是實體 id，需映射至 entities 中的 name
+    - 若目標為數值實體且 name 空白，嘗試以 attributes.value + unit 組合字串
+    """
+    triples: List[du.Triple] = []
+    if not isinstance(data, dict):
+        return triples
+
+    ents = {e.get("id"): e for e in data.get("entities", [])
+            if isinstance(e, dict) and e.get("id")}
+    for rel in data.get("relations", []) or []:
+        if not isinstance(rel, dict):
+            continue
+        src_id = rel.get("source")
+        tgt_id = rel.get("target")
+        rel_name = (rel.get("relation") or "未知").strip()
+
+        src_ent = ents.get(src_id, {}) or {}
+        tgt_ent = ents.get(tgt_id, {}) or {}
+        head = (src_ent.get("name") or "未知").strip()
+
+        tail = (tgt_ent.get("name") or "").strip()
+        if not tail:
+            # 若為數值型且未提供 name，以 value+unit 組合；否則以「未知」回退
+            t_attrs = tgt_ent.get("attributes") or {}
+            val = t_attrs.get("value")
+            unit = t_attrs.get("unit") or ""
+            if val not in (None, ""):
+                tail = f"{val}{unit}".strip()
+            else:
+                tail = "未知"
+
+        triples.append({"head": head, "relation": rel_name, "tail": tail})
+
+    return triples
 
 
 def _pull_triples(text: str) -> List[du.Triple]:
     """
-    多輪 LLM 抽取三元組並去重合併。
-    回傳合併後的三元組列表。
+    多輪 LLM 抽取並合併。
+    相容兩種格式：
+      (A) 舊：{"triples":[{"subject":"A","relation":"R","object":"B"}, ...]}
+      (B) 新：{"entities":[...], "relations":[...]}
     """
     all_rounds: List[List[du.Triple]] = []
     last_error: Exception | None = None
@@ -43,7 +88,7 @@ def _pull_triples(text: str) -> List[du.Triple]:
     for i in range(LLM_ROUNDS):
         print(f'🔸 GPT 抽取 round {i + 1}')
         start = time.time()
-        raw = extract_entities_relations(text)
+        raw = extract_entities_relations(text)  # 僅回傳 JSON 字串（依抽取 prompt）
         elapsed = time.time() - start
         print(f'  ↳ 完成，用時 {elapsed:.1f}s')
 
@@ -52,8 +97,14 @@ def _pull_triples(text: str) -> List[du.Triple]:
             continue
 
         try:
-            triples = du.json_to_triples(json.loads(raw.replace("`", "")))  # 移除 API 回傳中的所有反引號
-            all_rounds.append(triples)
+            payload = json.loads(raw.replace("`", ""))  # 移除 API 回傳中的所有反引號
+            if isinstance(payload, dict) and ("entities" in payload or "relations" in payload):
+                triples = _er_to_triples(payload)
+            else:
+                # 舊格式回退
+                triples = du.json_to_triples(payload) or []
+            if triples:
+                all_rounds.append(triples)
         except Exception as e:
             last_error = e
             print(f'[WARN] JSON 解析失敗於 round {i + 1}: {e}')
@@ -70,7 +121,7 @@ def _process_single(news_id: str, text: str) -> None:
     """
     處理單篇新聞：
       1. 嵌入全文
-      2. LLM 抽取三元組
+      2. LLM 抽取（相容新/舊格式）→ 三元組
       3. 向量檢索 KG
       4. 去重與編號
       5. 輸出結果與事實判斷
@@ -78,7 +129,7 @@ def _process_single(news_id: str, text: str) -> None:
     RES_DIR.mkdir(parents=True, exist_ok=True)
     VEC_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 移除輸入新聞中的所有反引號
+    # 依現有慣例，先移除輸入新聞中的所有反引號
     text = text.replace("`", "")
 
     # 全文嵌入
@@ -102,9 +153,10 @@ def _process_single(news_id: str, text: str) -> None:
     if not raw_lines:
         sys.exit('⚠️ 無 KG 命中')
 
-    # 去重與重編號
+    # 去重與重編號（保持既有輸出模式）
     kept = deduplicate(raw_lines)
-    final = [re.sub(r'^\d+\.', f'[{i}]', ln, count=1) for i, ln in enumerate(kept, 1)]
+    final = [re.sub(r'^\d+\.', f'[{i}]', ln, count=1)
+             for i, ln in enumerate(kept, 1)]
 
     # 組合輸出（不加任何反引號圍欄）
     news_block = "[原始新聞]\n" + text
@@ -117,7 +169,6 @@ def _process_single(news_id: str, text: str) -> None:
 
     # 事實判斷
     judged_raw = judge_news_kb(f"{news_block}\n\n{kb_block}")
-    # 移除判斷結果中的所有反引號
     judged_clean = judged_raw.replace("`", "")
     judge_file.write_text(judged_clean, encoding='utf-8')
 
@@ -159,8 +210,10 @@ def main() -> None:
 
 
 if __name__ == '__main__':
-    print(f'⚙️ USER_INPUT_DIR: {USER_INPUT_DIR.resolve()} (exists: {USER_INPUT_DIR.is_dir()})')
-    print(f'⚙️ RES_DIR:        {RES_DIR.resolve()} (exists: {RES_DIR.is_dir()})')
+    print(
+        f'⚙️ USER_INPUT_DIR: {USER_INPUT_DIR.resolve()} (exists: {USER_INPUT_DIR.is_dir()})')
+    print(
+        f'⚙️ RES_DIR:        {RES_DIR.resolve()} (exists: {RES_DIR.is_dir()})')
     files = list(USER_INPUT_DIR.glob("*.txt"))
     print(f'🔍 找到 {len(files)} 個輸入檔案：{[p.name for p in files]}')
 

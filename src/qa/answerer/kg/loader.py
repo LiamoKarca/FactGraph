@@ -1,8 +1,3 @@
-# Decompiled with PyLingual (https://pylingual.io)
-# Internal filename: /home/karca5103/dev/FactGraph/src/qa/answerer/kg/loader.py
-# Bytecode version: 3.12.0rc2 (3531)
-# Source timestamp: 2025-07-01 14:11:48 UTC (1751379108)
-
 from pathlib import Path
 
 import numpy as np

@@ -1,8 +1,3 @@
-# Decompiled with PyLingual (https://pylingual.io)
-# Internal filename: /home/karca5103/dev/FactGraph/src/qa/verifier/kg/loader.py
-# Bytecode version: 3.12.0rc2 (3531)
-# Source timestamp: 2025-07-04 08:01:40 UTC (1751616100)
-
 """
 KG DataFrame / 向量載入
 """
