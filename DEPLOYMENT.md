@@ -16,13 +16,13 @@
 
   * 最終映像：`factgraph-backend`
   * Buildx 快取：`buildcache`（建議獨立）
-* **標籤策略**：時間戳 `YYYYMMDD-HHMM`（不可變，便於比對與回滾）
+* **標籤策略**：時間戳 `YYYYMMDD-HHMM`（格式不變，便於比對與回滾）
 
 ---
 
 ## 1) 需求與權限
 
-* 工具：Docker 24+、gcloud 530+、（可選）Firebase CLI
+* 工具：Docker 24+、gcloud 530+、Firebase CLI
 * GCP 角色（部署帳號）：
 
   * `roles/artifactregistry.admin`（初始化期）
@@ -32,7 +32,7 @@
 
 ---
 
-## 2) 一次性初始化（沒做過才跑）
+## 2) 一次性初始化（沒做過才需跑）
 
 ```bash
 # 2.1 建立 Repos（存在會報錯，無視即可）
@@ -57,7 +57,7 @@ docker buildx inspect --bootstrap
 
 ---
 
-## 3) 環境變數（每次部署前先備妥）
+## 3) 環境變數（"每次"部署前，必先備妥）
 
 > **務必用 ASCII 雙引號**（不要用全形 ” “）。
 > 下列指令可貼上整段執行；缺值會立刻中止，避免出現 `-docker.pkg.dev///` 的錯誤。
@@ -68,7 +68,7 @@ export REGION=${REGION:-"asia-southeast1"}; : "${REGION:?REGION missing}"
 export PROJECT=${PROJECT:-"factgraph-38be7"}; : "${PROJECT:?PROJECT missing}"
 export REPO_IMG=${REPO_IMG:-"factgraph-backend"}; : "${REPO_IMG:?REPO_IMG missing}"
 
-# 3.2 Buildx Registry Cache（可選；若不用快取就不要設定）
+# 3.2 Buildx Registry Cache（快取設定）
 export CACHE_REF="${REGION}-docker.pkg.dev/${PROJECT}/buildcache/docker:${REPO_IMG}"
 
 # 3.3 本次不可變標籤
@@ -88,9 +88,9 @@ echo "CACHE_REF=${CACHE_REF:-<none>}"
 
 ---
 
-## 4) Build & Push（兩種模式）
+## 4) Build & Push（兩種方式）
 
-### 4.1 推薦：使用 Registry Cache（快）
+### 4.1 建議且推薦：使用 Registry Cache（速度快）
 
 ```bash
 docker buildx build \
@@ -103,7 +103,7 @@ docker buildx build \
   --progress=plain .
 ```
 
-### 4.2 簡化：不使用 Cache（保證一定能推上去）
+### 4.2 簡化：不使用 Cache（但保證一定能推上去，速度很慢）
 
 ```bash
 docker buildx build \
@@ -124,7 +124,7 @@ docker buildx build \
 > 使用 **tags list** 最清楚。
 
 ```bash
-# 5.1 看 tag 清單（建議首選）
+# 5.1 查看 tag 清單
 gcloud artifacts docker tags list \
   "${REGION}-docker.pkg.dev/${PROJECT}/${REPO_IMG}/${REPO_IMG}" \
   --sort-by=~UPDATE_TIME \
@@ -148,7 +148,7 @@ docker buildx imagetools inspect \
 ## 6) 部署到 Cloud Run
 
 ```bash
-# 若要讓 Cloud Run 永遠抓最新穩定版，也可同步更新 latest（可選）
+# 讓 Cloud Run 抓最新穩定版，同步更新 latest
 gcloud artifacts docker tags add \
   "${IMAGE}" \
   "${REGION}-docker.pkg.dev/${PROJECT}/${REPO_IMG}/${REPO_IMG}:latest"
@@ -162,7 +162,7 @@ gcloud run deploy "${REPO_IMG}" \
   --memory=16Gi \
   --concurrency=40 \
   --timeout=900 \
-  --min-instances=1 \
+  --min-instances=0 \
   --max-instances=3 \
   --allow-unauthenticated
 ```
@@ -190,7 +190,7 @@ gcloud run services update-traffic "${REPO_IMG}" \
 
 ---
 
-## 8) Firebase Hosting（前端）要點（選讀）
+## 8) Firebase Hosting：前端部署要點 
 
 `frontend/firebase.json`（重點是把 `/api/**` rewrite 到 Cloud Run）：
 
@@ -281,7 +281,7 @@ REPO_IMG="${REPO_IMG:-factgraph-backend}"
 : "${PROJECT:?PROJECT missing}"
 : "${REPO_IMG:?REPO_IMG missing}"
 
-# === 可選：Registry Cache ===
+# === Registry Cache ===
 CACHE_REF="${CACHE_REF:-${REGION}-docker.pkg.dev/${PROJECT}/buildcache/docker:${REPO_IMG}}"
 
 # === Tag & Image ===

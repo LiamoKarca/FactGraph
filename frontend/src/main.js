@@ -19,9 +19,10 @@ createApp(App)
 // 本地開發時，Vite 會自動處理路由和靜態資源
 // % cd ~/dev/FactGraph/frontend
 // % yarn install
-// $ yarn run dev
+// % yarn run dev
 
 // 前端更新時，需要重新部署到 Firebase Hosting
 // % cd ~/dev/FactGraph/frontend
+// % yarn install
 // % yarn run build
 // % firebase deploy --only hosting
