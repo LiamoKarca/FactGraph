@@ -12,8 +12,8 @@ from typing import Any, Dict, List, Optional
 
 from neo4j import GraphDatabase, Driver
 
-from src.common.gadget import LOGGER
-from src.config import NEO4J_CONFIG
+from ...common.gadget import LOGGER
+from ...config import NEO4J_CONFIG
 
 
 class Neo4jLoader:
@@ -28,7 +28,8 @@ class Neo4jLoader:
         password = NEO4J_CONFIG["password"]
         self.database: Optional[str] = NEO4J_CONFIG.get("database")
         try:
-            self.driver: Driver = GraphDatabase.driver(uri, auth=(user, password))
+            self.driver: Driver = GraphDatabase.driver(
+                uri, auth=(user, password))
         except Exception as exc:
             LOGGER.critical("無法建立 Neo4j 連線: %s", exc)
             sys.exit(1)
@@ -54,7 +55,8 @@ class Neo4jLoader:
             # 插入節點
             for node in nodes:
                 try:
-                    props = {k: v for k, v in node.items() if k not in ['id', 'name', 'type']}
+                    props = {k: v for k, v in node.items() if k not in [
+                        'id', 'name', 'type']}
                     session.run(
                         """
                         MERGE (n:Entity {name: $name})

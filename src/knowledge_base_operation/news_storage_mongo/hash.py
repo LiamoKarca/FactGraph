@@ -11,7 +11,7 @@ def generate_news_id(publisher: str, title: str, date: str) -> str:
     formatted_date = date.replace("/", "")  # 移除日期中的 "/"
     return f"{publisher}_{title_hash}_{formatted_date}"
 
-# 測試用數據
+# 測試用文本
 publisher = "CNA"
 title = "駐瑞典代表投書：對台威脅就是對全世界威脅"
 date = "2025/2/25"
@@ -20,4 +20,4 @@ date = "2025/2/25"
 news_id = generate_news_id(publisher, title, date)
 
 # 顯示結果
-print("新聞 ID:", news_id)
+print("測試新聞 ID:", news_id)

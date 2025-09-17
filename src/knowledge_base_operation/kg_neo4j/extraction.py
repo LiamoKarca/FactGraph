@@ -1,5 +1,5 @@
 """
-Extraction Module (GPT 版本)
+Extraction Module
 
 本模組透過 OpenAI 官方 SDK 抽取新聞文本中的實體與關係，
 包含：
@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional
 
 import openai
 
-from src.common.gadget import LOGGER
+from ...common.gadget import LOGGER
 
 # 讀取環境變數
 GPT_API_KEY: str | None = os.getenv('GPT_API')
@@ -37,7 +37,7 @@ openai.api_key = GPT_API_KEY
 # 參數設定
 DEFAULT_TEMPERATURE: float = 0.2
 MAX_TOKENS: int = 4096
-DEFAULT_PROMPT_FILE: str = 'src/knowledge_graph/prompts/extraction-prompt.txt'
+DEFAULT_PROMPT_FILE: str = 'src/knowledge_base_operation/kg_neo4j/prompts/extraction-prompt.txt'
 
 
 def get_default_prompt(prompt_file: str = DEFAULT_PROMPT_FILE) -> str:
@@ -134,7 +134,8 @@ def extract_json_block(response_text: str) -> Optional[Dict[str, Any]]:
     # 嘗試匹配 ```json``` 區段
     pattern = r'```json\s*(\{.*?\})\s*```'
     match = re.search(pattern, response_text, re.DOTALL | re.IGNORECASE)
-    json_block = match.group(1) if match else extract_first_json_object(response_text)
+    json_block = match.group(
+        1) if match else extract_first_json_object(response_text)
 
     if not json_block:
         LOGGER.warning('未找到 JSON 區塊，回傳原始內容：%s', response_text)

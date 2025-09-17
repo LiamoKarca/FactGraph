@@ -25,7 +25,8 @@ def transform_to_neo4j_format(extraction_result: Dict[str, Any]) -> Tuple[List[D
     relationships = []
     id_to_name = {}
     for entity in extraction_result.get('entities', []):
-        node = {'id': entity.get('id'), 'name': entity.get('name'), 'type': entity.get('type', 'Entity')}
+        node = {'id': entity.get('id'), 'name': entity.get(
+            'name'), 'type': entity.get('type', 'Entity')}
         for k, v in entity.get('attributes', {}).items():
             node[k] = v
         nodes.append(node)
