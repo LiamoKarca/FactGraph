@@ -52,6 +52,22 @@
       <span v-if="status"> ｜ 狀態：{{ status }} ｜ {{ modeLabel }}</span>
     </p>
 
+    <!-- 分數條（僅在 verifier / rag_mode；自動從結果文本抓「x/10」或「x分」或「可信度評分 x」） -->
+    <div
+      v-if="status === 'DONE' && (normalizedMode === 'verifier' || normalizedMode === 'rag_mode') && Number.isFinite(score)"
+      class="score-wrap"
+      role="region"
+      aria-label="分數"
+    >
+      <div class="score-head">
+        <span class="score-label">{{ normalizedMode === 'rag_mode' ? '可信度評分' : '可信度評分' }}</span>
+        <span class="score-value">{{ scoreDisplay }}</span>
+      </div>
+      <div class="score-track" role="progressbar" :aria-valuemin="0" :aria-valuemax="10" :aria-valuenow="score">
+        <div class="score-fill" :style="{ width: scorePercent + '%' }"></div>
+      </div>
+    </div>
+
     <!-- 結果卡片 -->
     <div class="answer-card" :class="{ default: !result }">
       <template v-if="loading || status !== 'DONE'">
@@ -111,7 +127,7 @@ const status = ref('PENDING')   // Firestore status
 const loading = ref(true)
 const mode = ref('')            // 'rag' | 'writing' | 'question'
 
-const result = ref('')          // 主要結果
+const result = ref('')          // 主要結果（HTML 字串）
 const knowledge = ref('')       // 對照知識
 const knowledgeCollapsed = ref(true)
 
@@ -125,7 +141,7 @@ function showError(msg) {
   errorTimeout = setTimeout(() => (errorMessage.value = ''), 2000)
 }
 
-/** 將後端 mode 轉成人類可讀 */
+/** 將後端 mode 轉成人類可讀（原樣保留） */
 const modeLabel = computed(() => {
   switch (mode.value) {
     case 'rag': return '實時 RAG'
@@ -135,7 +151,41 @@ const modeLabel = computed(() => {
   }
 })
 
-/** 將 Firestore 資料套用到畫面 */
+/** 統一前端顯示用的模式：writing→verifier、rag→rag_mode、question→answerer */
+const normalizedMode = computed(() => {
+  switch (mode.value) {
+    case 'rag': return 'rag_mode'
+    case 'writing': return 'verifier'
+    case 'question': return 'answerer'
+    default: return mode.value || ''
+  }
+})
+
+/** 從結果 HTML 中解析分數：優先 x/10；其次「x分」；或「可信度評分 x」；回傳 0~10 的數字 */
+const score = computed(() => {
+  try {
+    const html = String(result.value || '')
+    // 去標籤與全形轉半形
+    const plain = html.replace(/<[^>]+>/g, ' ')
+    const normalized = plain.replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFF10 + 0x30))
+    // 1) "x/10"
+    let m = normalized.match(/([0-9]+(?:\.[0-9]+)?)\s*\/\s*10/)
+    // 2) 「x分」或「x 分」
+    if (!m) m = normalized.match(/\b([0-9]+(?:\.[0-9]+)?)\s*分\b/)
+    // 3) 「可信度評分 ... x」
+    if (!m) m = normalized.match(/可信度\s*評分[^0-9]*([0-9]+(?:\.[0-9]+)?)/)
+    if (!m) return undefined
+    const n = parseFloat(m[1])
+    if (!Number.isFinite(n)) return undefined
+    return Math.max(0, Math.min(10, n))
+  } catch {
+    return undefined
+  }
+})
+const scorePercent = computed(() => score.value != null ? Math.round((score.value / 10) * 1000) / 10 : 0)
+const scoreDisplay = computed(() => score.value != null ? `${Number(score.value.toFixed(2))}/10` : '')
+
+/** 將 Firestore 資料套用到畫面（原樣保留） */
 function applySnapshot(data) {
   if (data.mode) mode.value = data.mode
 
@@ -161,7 +211,7 @@ function applySnapshot(data) {
   loading.value = false
 }
 
-/** 訂閱任務狀態 */
+/** 訂閱任務狀態（原樣保留） */
 function subscribe(id) {
   if (!id) {
     showError('缺少任務 ID')
@@ -215,4 +265,38 @@ watch(() => route.params.id, v => {
 
 .container { padding: 1rem; }
 
+/* ====== 分數條（新增；不影響既有樣式） ====== */
+.score-wrap{
+  background: rgba(255,255,255,0.75);
+  border: 1px solid rgba(0,0,0,0.05);
+  border-radius: 14px;
+  padding: 10px 12px;
+  margin: 12px 0 14px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.06);
+  backdrop-filter: saturate(120%) blur(2px);
+}
+.score-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+.score-label{ font-weight:600; color:#333; letter-spacing: .02em; }
+.score-value{ color:#555; font-variant-numeric: tabular-nums; font-weight:600; }
+.score-track{
+  position: relative;
+  height: 14px;
+  background: #ececec;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.score-fill{
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f59e0b, #fb923c, #f59e0b);
+  box-shadow: inset 0 1px 1px rgba(255,255,255,0.6);
+  transition: width .6s ease;
+}
+@media (prefers-color-scheme: dark) {
+  .score-wrap{ background: rgba(20,20,20,0.55); border-color: rgba(255,255,255,0.06); box-shadow: 0 6px 18px rgba(0,0,0,0.35); }
+  .score-label{ color:#f3f3f3; }
+  .score-value{ color:#ddd; }
+  .score-track{ background: rgba(255,255,255,0.12); }
+}
 </style>
