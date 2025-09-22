@@ -10,7 +10,7 @@
 
   <!-- Header（與首頁相同結構與 class） -->
   <header class="header">
-    <div class="header-left">
+    <RouterLink to="/" class="header-left" aria-label="回到主查詢頁面" style="text-decoration:none; color:inherit; display:flex; align-items:center;">
       <span class="header-icon" role="img" aria-label="camera">
         <img src="/camara icon.png" alt="camera icon" style="width:60px;height:60px;display:block;" />
       </span>
@@ -18,7 +18,7 @@
         <div class="title">芒狗偵探</div>
         <div class="header-subtitle">新聞查核，透明可信，快速回覆。</div>
       </div>
-    </div>
+    </RouterLink>
 
     <div class="header-right">
       <button class="menu-btn" @click="toggleMenu" :aria-expanded="showMenu" aria-label="toggle menu">
@@ -69,13 +69,14 @@
     </div>
 
     <!-- 結果卡片 -->
-    <div class="answer-card" :class="{ default: !result }">
+    <div class="answer-card" :class="{ default: isResultEmpty }">
       <template v-if="loading || status !== 'DONE'">
         <div class="loading-spinner"></div>
         <p class="loading-text">芒狗調查中… 請稍候</p>
       </template>
       <template v-else>
-        <div v-html="result || defaultMsg"></div>
+        <div v-if="isResultEmpty" v-html="emptyMsg"></div>
+        <div v-else v-html="result"></div>
       </template>
     </div>
 
@@ -89,13 +90,14 @@
       </button>
 
       <transition name="fade">
-        <div v-show="!knowledgeCollapsed" class="knowledge-card" :class="{ default: !knowledge }">
+        <div v-show="!knowledgeCollapsed" class="knowledge-card" :class="{ default: isKnowledgeEmpty }">
           <template v-if="loading || status !== 'DONE'">
             <div class="loading-spinner"></div>
             <p class="loading-text">芒狗調查中… 請稍候</p>
           </template>
           <template v-else>
-            <div v-html="knowledge || defaultKnowledgeMsg"></div>
+            <div v-if="isKnowledgeEmpty" v-html="emptyMsg"></div>
+            <div v-else v-html="knowledge"></div>
           </template>
         </div>
       </transition>
@@ -109,9 +111,8 @@ import { useRoute } from 'vue-router'
 import { db } from '../firebase'
 import { doc, onSnapshot } from 'firebase/firestore'
 
-/** 與首頁相同的預設文字 */
-const defaultMsg = `<p>這裡會顯示結果。</p>`
-const defaultKnowledgeMsg = `<p>這裡會顯示對照知識。</p>`
+/** 空狀態訊息 */
+const emptyMsg = `<p>查無結果。</p>`
 
 // Header 狀態
 const showMenu = ref(false)
@@ -165,14 +166,10 @@ const normalizedMode = computed(() => {
 const score = computed(() => {
   try {
     const html = String(result.value || '')
-    // 去標籤與全形轉半形
     const plain = html.replace(/<[^>]+>/g, ' ')
     const normalized = plain.replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFF10 + 0x30))
-    // 1) "x/10"
     let m = normalized.match(/([0-9]+(?:\.[0-9]+)?)\s*\/\s*10/)
-    // 2) 「x分」或「x 分」
     if (!m) m = normalized.match(/\b([0-9]+(?:\.[0-9]+)?)\s*分\b/)
-    // 3) 「可信度評分 ... x」
     if (!m) m = normalized.match(/可信度\s*評分[^0-9]*([0-9]+(?:\.[0-9]+)?)/)
     if (!m) return undefined
     const n = parseFloat(m[1])
@@ -182,36 +179,51 @@ const score = computed(() => {
     return undefined
   }
 })
-const scorePercent = computed(() => score.value != null ? Math.round((score.value / 10) * 1000) / 10 : 0)
-const scoreDisplay = computed(() => score.value != null ? `${Number(score.value.toFixed(2))}/10` : '')
+const scorePercent = computed(() => (score.value != null ? Math.round((score.value / 10) * 1000) / 10 : 0))
+const scoreDisplay = computed(() => (score.value != null ? `${Number(score.value.toFixed(2))}/10` : ''))
 
-/** 將 Firestore 資料套用到畫面（原樣保留） */
+/** 判斷值是否「為空」：支援字串/HTML/陣列/物件 */
+function isEmptyValue(v) {
+  if (v == null) return true
+  if (typeof v === 'string') {
+    const noTags = v.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ')
+    return noTags.trim() === ''
+  }
+  if (Array.isArray(v)) return v.length === 0
+  if (typeof v === 'object') return Object.values(v).every(isEmptyValue)
+  return false
+}
+const isResultEmpty = computed(() => isEmptyValue(result.value))
+const isKnowledgeEmpty = computed(() => isEmptyValue(knowledge.value))
+
+/** 將 Firestore 資料套用到畫面（保留原模式邏輯，補齊「空結果」處理） */
 function applySnapshot(data) {
-  if (data.mode) mode.value = data.mode
+  if (data?.mode) mode.value = data.mode
+  status.value = data?.status || 'PENDING'
 
-  status.value = data.status || 'PENDING'
   if (status.value !== 'DONE') {
+    // 尚未完成：維持載入中
     loading.value = true
     return
   }
 
-  // DONE：依模式填資料
+  // 完成：依模式填資料
   if (mode.value === 'rag') {
-    result.value = data.ragAnswer || ''
+    result.value = data?.ragAnswer || ''
     knowledge.value = '' // RAG 不顯示對照知識
   } else if (mode.value === 'question') {
-    result.value = data.questionAnswer || ''
-    knowledge.value = data.questionKnowledge || ''
+    result.value = data?.questionAnswer || ''
+    knowledge.value = data?.questionKnowledge || ''
   } else {
     // 默認以 writing 視之
-    result.value = data.writingAnswer || ''
-    knowledge.value = data.writingKnowledge || ''
+    result.value = data?.writingAnswer || ''
+    knowledge.value = data?.writingKnowledge || ''
   }
 
   loading.value = false
 }
 
-/** 訂閱任務狀態（原樣保留） */
+/** 訂閱任務狀態：若文件不存在或內容為空，也視為 DONE + 查無結果 */
 function subscribe(id) {
   if (!id) {
     showError('缺少任務 ID')
@@ -228,16 +240,25 @@ function subscribe(id) {
   unsubscribe = onSnapshot(
     docRef,
     snap => {
-      if (!snap.exists()) return
+      if (!snap.exists()) {
+        // 明確：Firestore 查無此任務 → 顯示「查無結果」
+        loading.value = false
+        status.value = 'DONE'
+        mode.value = mode.value || '' // 保持現狀
+        result.value = ''
+        knowledge.value = ''
+        return
+      }
+
       const data = snap.data()
 
-      // 後端若標註錯誤，直接顯示在結果區
-      if (data.error?.code && data.error?.message) {
+      // 後端若標註錯誤，直接顯示於結果區
+      if (data?.error?.code && data?.error?.message) {
         loading.value = false
         status.value = 'DONE'
         mode.value = data.mode || mode.value
         result.value = `<p>⚠️ ${data.error.message}</p>`
-        knowledge.value = mode.value === 'rag' ? '' : `<p>（無對照知識）</p>`
+        knowledge.value = mode.value === 'rag' ? '' : ''
         return
       }
 
@@ -248,6 +269,7 @@ function subscribe(id) {
       status.value = 'DONE'
       result.value = `<p>⚠️ 讀取任務狀態失敗：${err.message}</p>`
       knowledge.value = ''
+      showError('讀取失敗')
     }
   )
 }
@@ -265,7 +287,7 @@ watch(() => route.params.id, v => {
 
 .container { padding: 1rem; }
 
-/* ====== 分數條（新增；不影響既有樣式） ====== */
+/* ====== 分數條 ====== */
 .score-wrap{
   background: rgba(255,255,255,0.75);
   border: 1px solid rgba(0,0,0,0.05);

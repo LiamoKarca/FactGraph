@@ -6,15 +6,15 @@
 
   <!-- Header：與首頁相同 -->
   <header class="header">
-    <div class="header-left">
+    <RouterLink to="/" class="header-left" aria-label="回到主查詢頁面" style="text-decoration:none; color:inherit; display:flex; align-items:center;">
       <span class="header-icon" role="img" aria-label="camera">
         <img src="/camara icon.png" alt="camera icon" style="width:60px;height:60px;display:block;" />
       </span>
-      <div class="header-text">
-        <div class="header-title">芒狗偵探</div>
+      <div class="header-title">
+        <div class="title">芒狗偵探</div>
         <div class="header-subtitle">新聞查核，透明可信，快速回覆。</div>
       </div>
-    </div>
+    </RouterLink>
 
     <div class="header-right">
       <button class="menu-btn" @click="toggleMenu" :aria-expanded="showMenu" aria-label="toggle menu">
