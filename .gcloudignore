@@ -43,6 +43,7 @@ env/
 .coverage
 .pytest_cache/
 htmlcov/
+experiment/
 
 # Node / 前端建置檔案（若有）
 node_modules/

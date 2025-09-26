@@ -30,3 +30,6 @@ src/knowledge_base_operation/
 # ckip ws
 models/CKIP/ws
 models/CKIP/xet
+
+# 實驗測試用
+experiment/

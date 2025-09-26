@@ -1,7 +1,7 @@
 """
 answerer ─ 問答主流程（Orchestrator）
 
-0. python -m src.qa.answerer.pipeline <id.txt>
+0. python -m experiment.answerer.pipeline <id.txt>
 1. 讀取問題 → slug
 2. 抽取三元組（gpt-4o-mini）
 3. 向量檢索 KG
@@ -26,8 +26,8 @@ from .kg.loader import load_kg_vectors, load_kg_df
 from .kg.search import search_by_triples
 from .llm.gpt import GPTClient
 from .llm.prompt_loader import load_prompt
-from ..tools import data_utils as du
-from ..tools import kg_nl as knl
+from .tools import data_utils as du
+from .tools import kg_nl as knl
 
 import argparse
 import os
