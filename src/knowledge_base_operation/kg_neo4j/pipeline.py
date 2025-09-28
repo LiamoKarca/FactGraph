@@ -62,9 +62,9 @@ except Exception:  # pragma: no cover
     )
 
 # ── 常數 ───────────────────────────────────────────────────────────────────────────
-KG_TIMES_CSV_DEFAULT = "data/processed/knowledge-graph/kg_times.csv"
-KG_MAX_TIMES_DEFAULT = 3
-MAX_RETRY_LLM = 5
+KG_TIMES_CSV_DEFAULT = "data/processed/knowledge-graph/kg_times.csv" # 預設計數檔路徑
+KG_MAX_TIMES_DEFAULT = 1 # 同一篇新聞的最大處理次數
+MAX_RETRY_LLM = 5 # LLM 呼叫失敗重試次數上限
 
 
 # ── 小工具 ─────────────────────────────────────────────────────────────────────────

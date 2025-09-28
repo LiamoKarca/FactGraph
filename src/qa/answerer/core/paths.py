@@ -44,7 +44,7 @@ INTERIM_ANSWERER_DIR: Path = DATA_DIR / 'interim' / 'answerer'
 USER_INPUT_DIR: Path = INTERIM_ANSWERER_DIR / 'user-input'
 
 # 知識圖譜檔案
-KG_EMB_PATH: Path = PROCESSED_KG_DIR / 'kg-triplet.emb.npy'
+KG_EMB_PATH: Path = PROCESSED_KG_DIR / 'neo4j-kg.emb.npy'
 KG_CSV_PATH: Path = RAW_KG_DIR / 'neo4j-kg-raw-graph.csv'
 
 # Answerer 輸出目錄

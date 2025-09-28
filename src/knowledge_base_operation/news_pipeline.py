@@ -1,5 +1,5 @@
 """
-- $python src/knowledge_base_operation/news_pipeline.py
+$ python src/knowledge_base_operation/news_pipeline.py
 一鍵串接：
 1) 先跑新聞爬蟲總管線：src/knowledge_base_operation/news_crawler/pipeline.py
 2) 成功後接續跑合併/去重/上傳總管線：src/knowledge_base_operation/news_merge/pipeline.py

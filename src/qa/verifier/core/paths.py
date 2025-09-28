@@ -49,7 +49,7 @@ PROJECT_ROOT: Path = _find_repo_root()
 
 # 模型與資料目錄
 CKIP_ROOT: Path = PROJECT_ROOT / 'models' / 'CKIP' / 'models--ckiplab--bert-base-chinese'
-KG_EMB_PATH: Path = PROJECT_ROOT / 'data' / 'processed' / 'knowledge-graph' / 'kg-triplet.emb.npy'
+KG_EMB_PATH: Path = PROJECT_ROOT / 'data' / 'processed' / 'knowledge-graph' / 'neo4j-kg.emb.npy'
 KG_CSV_PATH: Path = PROJECT_ROOT / 'data' / 'raw' / 'knowledge-graph' / 'neo4j-kg-raw-graph.csv'
 
 # 中介資料與結果目錄

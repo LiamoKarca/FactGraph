@@ -10,7 +10,7 @@ Extraction Module
 
 設定方式：
   - 環境變數 GPT_API 儲存 API Key
-  - 環境變數 GPT_MODEL 儲存模型名稱，預設 gpt-4o
+  - 模型指定 gpt-4o-mini)
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from ...common.gadget import LOGGER
 
 # 讀取環境變數
 GPT_API_KEY: str | None = os.getenv('GPT_API')
-GPT_MODEL: str = os.getenv('GPT_MODEL', 'gpt-4o')
+GPT_MODEL: str = ('gpt-4o-mini')
 
 if not GPT_API_KEY:
     LOGGER.critical('找不到 GPT_API 環境變數，請確認 .env 設定！')

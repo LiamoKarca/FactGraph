@@ -1,6 +1,7 @@
 """
+$ python -m src.qa.preliminary_work.embed_kg_data_csv
 將提取出的原始知識 data/raw/kg-raw-graph.csv（三元組格式）
-轉成向量檔 data/vector/kg-raw-graph.emb.npy
+轉成向量檔 data/processed/knowledge-graph/neo4j-kg.emb.npy
 """
 import time
 from pathlib import Path
@@ -21,7 +22,7 @@ tqdm_cfg = dict(bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} "
 # ─── 1. 路徑與參數 ───────────────────────────────────────────
 CSV_PATH = "data/raw/knowledge-graph/neo4j-kg-raw-graph.csv"
 MODEL_ROOT = Path("models/CKIP/models--ckiplab--bert-base-chinese")
-OUT_NPY = "data/processed/knowledge-graph/kg-triplet.emb.npy"
+OUT_NPY = "data/processed/knowledge-graph/neo4j-kg.emb.npy"
 
 WINDOW, STRIDE = 510, 256  # sliding window
 BATCH_SRC, BATCH_ENC = 32, 16  # 來源句數 / encode 批次
