@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 強化版知識檢索（對齊 answerer 模式）
 
@@ -87,7 +86,7 @@ def _get_gpt() -> Optional[Any]:
     if not USE_GPT_EXPAND:
         return None
     try:
-        from src.qa.answerer.llm.gpt import GPTClient
+        from ..llm.gpt import GPTClient
 
         return GPTClient(
             api_key=os.getenv("OPENAI_API_KEY"),
