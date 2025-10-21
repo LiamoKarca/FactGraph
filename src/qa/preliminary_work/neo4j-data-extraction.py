@@ -1,4 +1,8 @@
-# python -m src.qa.preliminary_work.neo4j-data-extraction
+"""
+Neo4j 資料匯出模組
+執行：
+python -m src.qa.preliminary_work.neo4j-data-extraction
+"""
 import os
 import shutil
 

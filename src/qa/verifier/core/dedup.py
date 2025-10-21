@@ -26,10 +26,15 @@ import re
 import numpy as np
 from sentence_transformers import util
 
-from .config import DUP_TH, ENTITY_RE
 from .embeddings import embed_text
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ──────────────── 參數與 GPT 客戶端 ────────────────
+
+DUP_TH = float(os.getenv("DUP_TH", "0.8"))
+ENTITY_RE = re.compile(r'^(?:\[\d+\]|\d+\.)\s*([^，、:：\s]+)')
 
 # 預設開啟
 USE_GPT_FILTER = os.getenv("DEDUP_USE_GPT", "0") == "1"

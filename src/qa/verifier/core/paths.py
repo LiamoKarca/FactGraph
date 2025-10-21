@@ -48,7 +48,9 @@ def _find_repo_root(marker: str = 'FactGraph',
 PROJECT_ROOT: Path = _find_repo_root()
 
 # 模型與資料目錄
-CKIP_ROOT: Path = PROJECT_ROOT / 'models' / 'CKIP' / 'models--ckiplab--bert-base-chinese'
+#CKIP_ROOT: Path = PROJECT_ROOT / 'models' / 'CKIP' / 'models--ckiplab--bert-base-chinese'
+# 改用 MiniLM（Sentence-Transformers 版）
+CKIP_ROOT: Path = PROJECT_ROOT / 'models' / 'MiniLM' / 'models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2'
 KG_EMB_PATH: Path = PROJECT_ROOT / 'data' / 'processed' / 'knowledge-graph' / 'neo4j-kg.emb.npy'
 KG_CSV_PATH: Path = PROJECT_ROOT / 'data' / 'raw' / 'knowledge-graph' / 'neo4j-kg-raw-graph.csv'
 

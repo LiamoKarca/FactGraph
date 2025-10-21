@@ -58,8 +58,13 @@ async def query_verifier(file: UploadFile = File(...), date: str = Form(...)):
 
     # 讀取處理後的結果檔案
     processed_dir = project_root / "data" / "processed" / "verifier"
+
+    # 判斷判斷結果與知識配對結果的路徑
     judge_matches = list(processed_dir.glob(f"judge_result_{filename_base}.txt"))
-    kg_matches = list(processed_dir.glob(f"news_kg_{filename_base}.txt"))
+    dirt_dir = processed_dir / "dirt_removal"
+    kg_matches = list(dirt_dir.glob(f"news_kg_{filename_base}_dirt_removal.txt"))
+
+    # 若任一結果檔案不存在則報錯
     if not judge_matches or not kg_matches:
         raise HTTPException(status_code=500, detail="找不到處理結果檔案")
 

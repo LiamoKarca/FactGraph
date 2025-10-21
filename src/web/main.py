@@ -1,5 +1,8 @@
-# src/web/main.py
-#  $ uvicorn src.web.main:app --reload --host 0.0.0.0 --port 8080
+"""
+FastAPI 啟動入口 (src/web/main.py)
+啟動指令範例：
+uvicorn src.web.main:app --reload --host 0.0.0.0 --port 8080
+"""
 from __future__ import annotations
 
 import uuid
