@@ -1,9 +1,11 @@
 """
+注意：此檔為尚未重構前的原始檔案！
+
 ReAct 檢索代理（LangGraph）
 
 用法
 ----
-python -m src.qa.verifier.agent_langchain <news_id|檔名>
+python -m src.qa.verifier.agent.agent_langchain <news_id|檔名>
 
 特性
 ----
@@ -13,7 +15,7 @@ python -m src.qa.verifier.agent_langchain <news_id|檔名>
 4) 三元組鍵名正規化：容忍多種鍵名（head/h/source... 等）。
 5) StructuredTool 調用修正：保底階段直接呼叫內部實作，避免再次透過工具層。
 6) 結果輸出：[原始文本] + [比對知識]，格式回復完整資訊（type/屬性/關係名/事件時間/說明）。
-7) 新增：工具入參支援 {"triples": [...]}；累積器可解析工具 JSON 的 {"lines":[...]}。
+7) 工具入參支援 {"triples": [...]}；累積器可解析工具 JSON 的 {"lines":[...]}。
 
 環境變數
 --------
@@ -40,15 +42,12 @@ import os
 import re
 import threading
 import traceback
+import hashlib
+
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, TypedDict, Set, Optional
 from uuid import uuid4
-
-# 禁用 accelerate 對 transformers 的自動 device map 以穩定執行
-os.environ.setdefault("ACCELERATE_DISABLE_DEVICE_MAP", "1")
-os.environ.setdefault("TRANSFORMERS_NO_ACCELERATE", "1")
-
 from dotenv import load_dotenv
 from tqdm import tqdm
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
@@ -58,15 +57,18 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.errors import GraphRecursionError
 
-
 # 專案模組
-from .core.dedup import deduplicate
-from .core.embeddings import embed_triple
-from .core.paths import RES_DIR, USER_INPUT_DIR
-from .kg.search import cosine_search, kg_row_to_detail
-from .llm.extract import extract_entities_relations
+from ..core.dedup import deduplicate
+from ..core.embeddings import embed_triple
+from ..core.paths import RES_DIR, USER_INPUT_DIR
+from ..kg.search import cosine_search, kg_row_to_detail
+from ..llm.extract import extract_entities_relations
 
 load_dotenv(override=True)
+
+# 禁用 accelerate 對 transformers 的自動 device map 以穩定執行
+os.environ.setdefault("ACCELERATE_DISABLE_DEVICE_MAP", "1")
+os.environ.setdefault("TRANSFORMERS_NO_ACCELERATE", "1")
 
 # =========================
 # 全域設定與除錯日誌
@@ -97,8 +99,13 @@ MAX_EVID_CHARS = int(os.getenv("MAX_EVID_CHARS", "300"))
 # ── 顯名保底種子（機構名）控制 ──
 ENABLE_ORG_SEEDS: bool = os.getenv("ENABLE_ORG_SEEDS", "1").lower() in ("1", "true", "yes", "y")
 MAX_ORG_SEEDS: int = int(os.getenv("MAX_ORG_SEEDS", "8") or "8")
+# 單輪 org 種子（避免 h→t 倒置再跑一次）
+ORG_SEED_ONEPASS: bool = os.getenv("ORG_SEED_ONEPASS", "1").lower() in ("1", "true", "yes", "y")
 
 VERIFIER_DEBUG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+# 讓工具可以知道這次任務的 id（如 t_1022）；若外部沒傳，就用 timestamp 兜一個
+CURRENT_RUN_ID = os.getenv("NEWS_RUN_ID", "").strip() or datetime.now().strftime("run_%Y%m%d_%H%M%S")
 
 
 def _dlog(msg: str) -> None:
@@ -112,6 +119,21 @@ def _dlog(msg: str) -> None:
     except Exception:
         pass
 
+# ====== 寫檔與記錄工具 ======
+def _write_jsonl(path: Path, rows: List[Dict[str, Any]]) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as f:
+            for r in rows:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    except Exception:
+        _dlog(f"write_jsonl failed: {path}\n" + traceback.format_exc())
+
+def _derive_run_id_from_input(input_path_or_id: str) -> str:
+    base = Path(input_path_or_id).stem
+    # news_kg_t_1022_agent -> t_1022
+    m = re.search(r"(t_\d+)", base)
+    return m.group(1) if m else base
 
 # =========================
 # 健壯 JSON 解析（容忍 LLM 雜訊）
@@ -198,6 +220,35 @@ def parse_json_safely(raw: str) -> Any:
                     continue
 
     raise ValueError("Unable to parse JSON from input.")
+
+# =========================
+# 標準化 RankItem
+# =========================
+class RankItem(TypedDict):
+    id: str
+    text: str
+    source: str        # 'pg' | 'vector' | 'neo4j'
+    rank: int          # 來源內排序（1 起算）
+    score: float       # 來源內相似度（可為 0）
+    payload: Dict[str, Any]
+
+def _mk_id(text: str, src: str) -> str:
+    return f"{src}:{hashlib.sha1((src+'||'+(text or '')).encode('utf-8-sig')).hexdigest()[:12]}"
+
+def _items_from_hits(hits: List[Tuple[Dict, Dict]], src: str) -> List[RankItem]:
+    """把 (tri, det) 命中轉成 RankItem 列表；text 以 tri+det 的 JSON 字串表示，確保可還原。"""
+    items: List[RankItem] = []
+    for i, (tri, det) in enumerate(hits, start=1):
+        txt = json.dumps({"tri": tri, "det": det}, ensure_ascii=False)
+        items.append({
+            "id": _mk_id(txt, src),
+            "text": txt,
+            "source": src,
+            "rank": i,
+            "score": float(det.get("meta", {}).get("_debug", {}).get("cond_sum", 0.0)) if isinstance(det, dict) else 0.0,
+            "payload": {"tri": tri, "det": det},
+        })
+    return items
 
 
 # =========================
@@ -451,13 +502,13 @@ _ORG_SUFFIXES_CLEANED = "|".join(
 
 # 僅在「詞邊界或左引號/書名號」開頭，主幹不跨句讀；限制最長 40 字，避免吞整句
 _ORG_REGEX = re.compile(
-    rf"(?<![\w\u4e00-\u9fff])"                  # 左邊界：不要緊貼字母/數字/CJK
-    rf"(?:[《「『(【])?"                         # 可選：開頭引號/書名號
-    rf"("                                       
-    rf"[A-Za-z0-9\u4e00-\u9fff·＆&．\.\-（）()「」『』／\s]{{2,40}}"  # 主幹，不跨句讀
+    rf"(?<![\w\u4e00-\u9fff])"              # 左邊界：不要緊貼字母/數字/CJK
+    rf"(?:[《「『(【])?"                    # 可選：開頭引號/書名號
+    rf"("
+    rf"[A-Za-z0-9\u4e00-\u9fff·＆&．\.\-（）()／\s]{{2,40}}"  # 主幹（不含引號），不跨句讀
     rf")"
     rf"(?:{_ORG_SUFFIXES_CLEANED}|{_EN_ORG_SUFFIXES})"
-    rf"(?![\w\u4e00-\u9fff])"                   # 右邊界
+    rf"(?![\w\u4e00-\u9fff])"              # 右邊界
 )
 
 # 過泛詞黑名單（單獨命中時剔除）
@@ -502,7 +553,7 @@ def _extract_org_seeds(text: str) -> List[str]:
     # 正則 fallback / 混合
     if not out:
         out = []
-        
+
     # ⚠️ 拿整段完整匹配，確保把「中央社 / 協會 / 公司」等後綴包含進來
     regex_hits = [m.group(0).strip() for m in _ORG_REGEX.finditer(text or "")]
     out.extend(regex_hits)
@@ -510,7 +561,7 @@ def _extract_org_seeds(text: str) -> List[str]:
     # 清理：去重、過濾過長/過短、去掉孤立泛詞
     seen: set = set()
     cleaned: List[str] = []
-    
+
     # —— 以實際字元集合處理中英文引號/書名號/括號（避免 r'' + \uXXXX 失效）——
     OPEN_QUOTES = "“„‟‹«『「《(（[【"
     CLOSE_QUOTES = "”‟”›»』」》)）]】"
@@ -547,7 +598,7 @@ def _extract_org_seeds(text: str) -> List[str]:
 
     for name in out:
         name = normalize_org_name(name)
-        n = re.sub(r"\s+", "", name)  # 無空白版長度檢查     
+        n = re.sub(r"\s+", "", name)  # 無空白版長度檢查
         if not (2 <= len(n) <= 64):
             continue
         # 過濾常見泛詞單獨出現
@@ -623,7 +674,11 @@ def tool_extract_triples(text: str) -> str:
     """工具：抽取三元組。"""
     try:
         raw = extract_entities_relations(text) or ""
-        obj = json.loads(raw.replace("`", "")) if raw else {}
+        # 統一使用健壯解析，容忍圍欄/雜訊/尾逗號
+        try:
+            obj = parse_json_safely(raw) if raw else {}
+        except Exception:
+            obj = {}
         # 內部以標準鍵名組裝 → 對外轉成 h/r/t 外觀
         triples_std = _er_to_triples(obj)  # [{'head','relation','tail'}, ...]
         triples_hrt = [
@@ -673,6 +728,7 @@ def tool_pg_search(triple_json: str, top_k: int = 50, hops: int = 3) -> str:
     except Exception:
         pass
     try:
+        # --- 解析 triple_json ---
         try:
             tp_raw = parse_json_safely(triple_json)
         except Exception as e:
@@ -700,7 +756,33 @@ def tool_pg_search(triple_json: str, top_k: int = 50, hops: int = 3) -> str:
             "tail": tp.get("head", ""),
         }
 
-        # ③ 先查正向，再視情況查反向
+        # --- ORG_SEED（無向 OR）偵測＋log：relation 空、且 h xor t ---
+        def _is_org_seed(tp: dict) -> bool:
+            try:
+                h = (tp.get("head") or "").strip()
+                r = (tp.get("relation") or "").strip()
+                t = (tp.get("tail") or "").strip()
+                return (r == "") and bool(h) ^ bool(t)
+            except Exception:
+                return False
+
+        if _is_org_seed(tp):
+            org_mode = os.getenv("ORG_SEED_MODE","UNDIRECTED")
+            use_rel = os.getenv("ORG_SEED_USE_REL","0")
+            eff_val = (tp.get("head") or tp.get("tail") or "").strip()
+            eff_tri = {
+                "head": eff_val,
+                "relation": (eff_val if str(use_rel).lower() in {"1","true","yes","y"} else ""),
+                "tail": eff_val,
+            }
+            _dlog(
+                "pg_search: ORG_SEED detected "
+                f"(MODE={org_mode}, MIN_SHOULD={os.getenv('ORG_SEED_MIN_SHOULD','1')}, "
+                f"USE_REL={use_rel}, ALLOW_INVERT={os.getenv('ORG_SEED_ALLOW_INVERT','0')}) | "
+                f"original={json.dumps(tp, ensure_ascii=False)} | effective={json.dumps(eff_tri, ensure_ascii=False)}"
+            )
+
+       # ③ 先查正向，再視情況查反向
         hits_norm = retriever.search_triple(tp, top_k=top_k, hops=hops)
         hits_inv: list = []
         if tp.get("head") != tp.get("tail"):
@@ -709,16 +791,30 @@ def tool_pg_search(triple_json: str, top_k: int = 50, hops: int = 3) -> str:
         # ④ 合併並規整、轉文字、去重
         hits_all = _norm_hits(hits_norm + hits_inv)
         lines = _collect_hits_to_lines(hits_all)
+        items = _items_from_hits(hits_all, src="pg")
+
+        # 定義 unique_lines
         unique_lines = list(dict.fromkeys(lines))
+
         _dlog(
-            f"pg_search: hits_norm={len(hits_norm)} hits_inv={len(hits_inv)} "
-            f"-> unique={len(unique_lines)}, hops={hops}, top_k={top_k}"
+            "pg_search: summary | "
+            f"hits_norm={len(hits_norm)}, hits_inv={len(hits_inv)}, "
+            f"unique={len(unique_lines)}, hops={hops}, top_k={top_k}"
         )
-        return json.dumps({"lines": unique_lines, "hits": len(unique_lines)}, ensure_ascii=False)
-    except Exception:
-        _dlog("pg_search: search failed\n" + traceback.format_exc())
         return json.dumps(
-            {"lines": [], "hits": 0, "error": "pg_exception", "note": "pg_search failed"},
+            {"lines": unique_lines, "items": items, "hits": len(unique_lines)},
+            ensure_ascii=False
+        )
+    except Exception:
+        # 這是外層 try 的補齊：任何未預期錯誤，記 log 並回傳 JSON
+        _dlog("pg_search: exception\n" + traceback.format_exc())
+        return json.dumps(
+            {
+                "lines": [],
+                "hits": 0,
+                "error": "pg_exception",
+                "note": "pg_search failed"
+            },
             ensure_ascii=False,
         )
 
@@ -763,7 +859,10 @@ def tool_neo4j_search(triple_json: str, top_k: int = 50, hops: int = 2) -> str:
         hits = retriever.search_triple(tp, top_k=top_k, hops=hops)
         hits = _norm_hits(hits)
         _dlog(f"neo4j_search: hits={len(hits)}, hops={hops}, top_k={top_k}")
-        return json.dumps({"lines": _collect_hits_to_lines(hits)}, ensure_ascii=False)
+        return json.dumps({
+            "lines": _collect_hits_to_lines(hits),
+            "items": _items_from_hits(hits, src="neo4j")
+        }, ensure_ascii=False)
     except Exception:
         _dlog("neo4j_search: search failed\n" + traceback.format_exc())
         return json.dumps(
@@ -803,8 +902,20 @@ def tool_vector_search(triple_json: str, top_k: int = 100) -> str:
 
         tp = _norm_triple_dict(_take_first_triple(tp_raw))
         lines = _vector_search_impl(tp, top_k=top_k)
+        # 將向量檢索結果包成 RankItem（無 det 可用簡單 payload）
+        items: List[RankItem] = []
+        for i, ln in enumerate(lines, start=1):
+            txt = ln if ln.startswith("[比對]") else f"[比對] {ln}"
+            items.append({
+                "id": _mk_id(txt, "vector"),
+                "text": txt,
+                "source": "vector",
+                "rank": i,
+                "score": 0.0,
+                "payload": {"line": txt}
+            })
         _dlog(f"vector_search: returned_lines={len(lines)}")
-        return json.dumps({"lines": lines}, ensure_ascii=False)
+        return json.dumps({"lines": lines, "items": items}, ensure_ascii=False)
     except Exception:
         _dlog("vector_search: failed\n" + traceback.format_exc())
         return json.dumps(
@@ -822,18 +933,62 @@ def tool_vector_search(triple_json: str, top_k: int = 100) -> str:
     ),
 )
 def tool_merge_and_dedup(payload: str) -> str:
-    """工具：合併與去重。"""
+    """工具：合併 → 輸出 lines。"""
     try:
         obj = json.loads(payload)
     except Exception:
         obj = {}
-    lines_all: List[str] = []
-    for k in ("pg", "neo4j", "vector"):
-        chunk = (obj.get(k) or {}).get("lines") or []
-        lines_all.extend(list(chunk))
-    kept = deduplicate(lines_all, triples=None)
-    _dlog(f"merge_and_dedup: in={len(lines_all)}, out={len(kept)}")
-    return json.dumps({"lines": kept}, ensure_ascii=False)
+
+    # 1) 收集三路 items
+    def _get_items(key: str) -> List[RankItem]:
+        node = obj.get(key) or {}
+        return list(node.get("items") or [])
+    runs: Dict[str, List[RankItem]] = {
+        "pg": _get_items("pg"),
+        "vector": _get_items("vector"),
+        "neo4j": _get_items("neo4j"),
+    }
+
+    # 若完全沒有 items，保留舊行為（單純合併去重 lines）
+    if not any(runs.values()):
+        lines_all: List[str] = []
+        for k in ("pg", "neo4j", "vector"):
+            lines_all.extend(list((obj.get(k) or {}).get("lines") or []))
+        kept = deduplicate(lines_all, triples=None)
+        _dlog(f"merge_and_dedup(fallback): in={len(lines_all)}, out={len(kept)}")
+        return json.dumps({"lines": kept}, ensure_ascii=False)
+        
+    # 替代邏輯：直接合併所有 items 並轉換為 lines
+    all_items: List[RankItem] = []
+    all_items.extend(runs["pg"])
+    all_items.extend(runs["vector"])
+    all_items.extend(runs["neo4j"])
+
+    # 5) 渲染回原有 lines（相容既有格式）
+    lines: List[str] = []
+    
+    # [MODIFIED] 從 all_items 渲染，而不是 ranked
+    for c in all_items:
+        # 結構是 RankItem，text 欄位存了 (JSON 字串) 或 ([比對]行)
+        txt = c.get("text") or ""
+        
+        # 若 text 是 JSON 串 (來自 pg/neo4j)，則取 det/evidence 渲染；
+        try:
+            objj = json.loads(txt)
+            tri2, det2 = objj.get("tri") or {}, objj.get("det") or {}
+            s = _format_kb_line(_norm_triple_dict(tri2), det2, max_evid=MAX_EVID_CHARS)
+        except Exception:
+            # 否則 (來自 vector) 直接輸出
+            s = txt if txt.startswith("[比對]") else f"[比對] {txt}"
+        lines.append(s)
+
+    # 去重、保序
+    lines = list(dict.fromkeys(lines))
+    
+    # 返回簡化後的 JSON
+    return json.dumps({
+        "lines": lines
+    }, ensure_ascii=False)
 
 
 # =========================
@@ -855,7 +1010,7 @@ def _try_load_pg() -> Any:
         return _RET_PG
 
     try:
-        from ..tools.property_graph.li_csv_pg_retriever import (
+        from ...tools.property_graph.li_csv_pg_retriever import (
             CsvPropertyGraphRetriever,
         )
 
@@ -894,7 +1049,7 @@ def _try_load_neo4j() -> Any:
         _dlog("neo4j_search: disabled by env ENABLE_LI_ONLINE")
         return _RET_NEO4J
     try:
-        from .kg.llamaIndex.neo4j_li_retriever import LlamaIndexNeo4jRetriever  # type: ignore
+        from ..kg.llamaIndex.neo4j_li_retriever import LlamaIndexNeo4jRetriever  # type: ignore
 
         _RET_NEO4J = LlamaIndexNeo4jRetriever(
             date_field="date", evidence_field="evidence"
@@ -1037,7 +1192,11 @@ def extract_triples_node(state: AgentState) -> Dict:
     triples: List[Dict[str, str]] = []
     try:
         raw = extract_entities_relations(news_text) or ""
-        obj = json.loads(raw.replace("`", "")) if raw else {}
+        # 與工具一致改用健壯解析
+        try:
+            obj = parse_json_safely(raw) if raw else {}
+        except Exception:
+            obj = {}
         triples = _er_to_triples(obj)
     except Exception:
         _dlog("node: extract_triples_node failed\n" + traceback.format_exc())
@@ -1051,8 +1210,13 @@ def extract_triples_node(state: AgentState) -> Dict:
                 org = org.strip()
                 if not org:
                     continue
-                org_triples.append({"head": org, "relation": "", "tail": ""})
-                org_triples.append({"head": "", "relation": "", "tail": org})
+                if ORG_SEED_ONEPASS:
+                    # 只產生一條：由 PG 檢索器將其視為「h/r/t 任一命中即可」（無向 OR）
+                    org_triples.append({"head": org, "relation": "", "tail": ""})
+                else:
+                    # 舊行為（相容）：h 與 t 各一條
+                    org_triples.append({"head": org, "relation": "", "tail": ""})
+                    org_triples.append({"head": "", "relation": "", "tail": org})
             _dlog(f"org_seeds: names={len(orgs)} -> triples={len(org_triples)} | {orgs}")
         except Exception:
             _dlog("org_seeds: failed\n" + traceback.format_exc())
@@ -1076,7 +1240,41 @@ def agent_node(state: AgentState) -> Dict:
 
     current_triple = triples[idx]
     current_triple_json = json.dumps(current_triple, ensure_ascii=False)
-    _dlog(f"node: agent_node - processing triple {idx+1}/{len(triples)}: {current_triple_json}")
+
+    # ---- ORG_SEED（無向 OR）偵測：relation 為空 且 僅一側非空（本專案的保底機構種子型態）----
+    def _is_org_seed(tp: dict) -> bool:
+        try:
+            h = (tp.get("head") or tp.get("h") or "").strip()
+            r = (tp.get("relation") or tp.get("r") or "").strip()
+            t = (tp.get("tail") or tp.get("t") or "").strip()
+            return (r == "") and bool(h) ^ bool(t)
+        except Exception:
+            return False
+
+    org_seed_flag = _is_org_seed(current_triple)
+    if org_seed_flag:
+        org_mode = os.getenv("ORG_SEED_MODE", "UNDIRECTED")
+        org_min_should = os.getenv("ORG_SEED_MIN_SHOULD", "1")
+        org_use_rel = os.getenv("ORG_SEED_USE_REL", "0")
+        org_allow_inv = os.getenv("ORG_SEED_ALLOW_INVERT", "0")
+        # —— 只為顯示而組「有效查詢」三欄（不改動實際傳遞的 triple）——
+        org_val = (current_triple.get("head") or current_triple.get("tail") or "").strip()
+        eff = {
+            "head": org_val,
+            "relation": (org_val if str(org_use_rel).lower() in {"1","true","yes","y"} else ""),
+            "tail": org_val,
+        }
+        _dlog(
+            "node: agent_node - processing triple "
+            f"{idx+1}/{len(triples)} [ORG_SEED:{org_mode} OR] "
+            f"(MIN_SHOULD={org_min_should}, USE_REL={org_use_rel}, ALLOW_INVERT={org_allow_inv}) | "
+            f"original={current_triple_json} | effective={json.dumps(eff, ensure_ascii=False)}"
+        )
+    else:
+        _dlog(
+            "node: agent_node - processing triple "
+            f"{idx+1}/{len(triples)}: {current_triple_json}"
+        )
 
     llm = _build_llm().bind_tools(TOOLS, tool_choice="any")
     notes = state.get("notes") or ""
@@ -1221,7 +1419,7 @@ def should_continue(state: AgentState) -> str:
         f"assess: lines={len(lines)} total_cond={total_cond} per_ok={per_cond} "
         f"step={step} cap={cap} no_new={no_new} patience={patience}"
     )
-    
+
     # 提前終止：若累積比對行超過上限，也立即 finalize（避免爆 token）
     if AGENT_TOP_K_MAX > 0 and len(lines) > AGENT_TOP_K_MAX:
         _dlog("early stop: accumulated lines exceed top_k_max")
@@ -1343,7 +1541,7 @@ def run_retrieval(
             if "accum_lines" in delta:
                 cur = len(delta["accum_lines"] or [])
                 if cur != accum_lines_last:
-                    print(f"  ↳ 累積比對行：{cur}（+{cur - accum_lines_last}）")
+                    print(f"  ↳ 累積比對行：{cur}（+{cur - accum_lines_last}）")
                     _dlog(
                         f"stream: {node_name} accum_lines={cur} (+{cur - accum_lines_last})"
                     )
@@ -1357,7 +1555,7 @@ def run_retrieval(
     except GraphRecursionError as e:
         # 安全降落：即時輸出當前累積的 [比對] 行，避免整段失敗後無輸出
         _dlog(f"GraphRecursionError: {e} — fallback to finalize with current state")
-        print("⚠️  達到 LangGraph recursion_limit，上限=", RECURSION_LIMIT, "：以目前累積結果提前結束。")
+        print("⚠️  達到 LangGraph recursion_limit，上限=", RECURSION_LIMIT, "：以目前累積結果提前結束。")
         # 將目前 messages_last 轉為 [比對] 行，與 finalize() 的邏輯一致
         now_lines = _extract_kb_lines_from_messages(messages_last)
         now_lines = now_lines[:AGENT_TOP_K_MAX] if AGENT_TOP_K_MAX > 0 else now_lines
@@ -1426,7 +1624,7 @@ def _cmd_alias(_: List[str]) -> int:
             return int(retr_mod._cmd_alias([]))
         # fallback：提示直接呼叫 retriever
         print("提示：亦可直接執行 retriever 的 alias：")
-        print("  python -m src.qa.preliminary_work.build_csv_property_graph alias")
+        print("  python -m src.qa.preliminary_work.build_csv_property_graph alias")
         return 0
     except SystemExit as e:
         return int(e.code)
@@ -1475,16 +1673,24 @@ def main() -> None:
             raise SystemExit(f"❌ 找不到檔案：{path.resolve()}")
         news_text = path.read_text(encoding="utf-8-sig").strip()
         news_id = path.stem
-        print(f"📰 開始處理檔案：{path.resolve()}")
-        print(f"➡️  輸出目錄：{RES_DIR.resolve()}")
+        
+        # 從 input 推導 run_id 並設定環境變數，確保 CURRENT_RUN_ID 生效
+        # 此設定主要用於日誌追蹤，保留無妨)
+        run_id = _derive_run_id_from_input(news_id)
+        os.environ["NEWS_RUN_ID"] = run_id
+        global CURRENT_RUN_ID
+        CURRENT_RUN_ID = run_id
+        
+        print(f"📰 開始處理檔案：{path.resolve()} (Run ID: {run_id})")
+        print(f"➡️  輸出目錄：{RES_DIR.resolve()}")
         middle = run_factcheck_middle(news_text, session_id=news_id)
         out_path = RES_DIR / f"news_kg_{news_id}_agent.txt"
         out_path.write_text(middle, encoding="utf-8-sig")
         print(f"✅ 完成 ▶ 中間檔：{out_path.resolve()}")
         return
     print("用法：python -m src.qa.verifier.agent_langchain <news_id|檔名>")
-    print("      python -m src.qa.verifier.agent_langchain alias")
-    print("      python -m src.qa.verifier.agent_langchain pg '<triple_json>' [top_k]")
+    print("      python -m src.qa.verifier.agent_langchain alias")
+    print("      python -m src.qa.verifier.agent_langchain pg '<triple_json>' [top_k]")
 
 
 if __name__ == "__main__":

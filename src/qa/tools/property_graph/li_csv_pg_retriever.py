@@ -95,8 +95,11 @@ class CsvPropertyGraphRetriever:
         self._rel_hint_re: Optional[re.Pattern[str]] = None
 
         # 檢索布林規則可調參
-        self._min_should: int = int(
-            os.getenv("LI_PG_MIN_SHOULD", "2") or "2")  # H/R/T 至少命中幾個
+        # 動態閥值：分為嚴格（資訊豐富查詢）與寬鬆（資訊稀疏查詢）兩種模式
+        self._min_should_strict: int = int(
+            os.getenv("LI_PG_MIN_SHOULD_STRICT", "2") or "2")
+        self._min_should_loose: int = int(
+            os.getenv("LI_PG_MIN_SHOULD_LOOSE", "1") or "1")
         self._require_entity: bool = (
             str(os.getenv("LI_PG_REQUIRE_ENTITY", "1")).lower() in {"1", "true", "yes", "y"})
         self._event_pivot: bool = (str(os.getenv("LI_PG_EVENT_PIVOT", "1")).lower() in {
@@ -116,6 +119,31 @@ class CsvPropertyGraphRetriever:
         # 檢索期「即時 LLM 擴充」開關（別名不足時用）
         self._llm_runtime_enable: bool = (str(os.getenv(
             "ALIAS_LLM_RUNTIME_ENABLE", "0")).lower() in {"1", "true", "yes", "y"})
+
+        # —— Org-seed 無向 OR 模式設定（單輪、1-of-3 命中）——
+        self._org_seed_mode: str = str(os.getenv("ORG_SEED_MODE", "UNDIRECTED")).upper()
+        self._org_seed_min_should: int = int(os.getenv("ORG_SEED_MIN_SHOULD", "1") or "1")
+        # 欄位加權（目前僅預留解析，必要時可接入排序）
+        self._org_seed_field_weights: str = os.getenv(
+            "ORG_SEED_FIELD_WEIGHTS", "head:1.0,tail:1.0,relation:0.6")
+        # 機構種子是否允許倒置（預設關閉）；一般三元組仍使用 LI_PG_ALLOW_INVERT
+        self._org_seed_allow_invert: bool = str(os.getenv(
+            "ORG_SEED_ALLOW_INVERT", "0")).lower() in {"1", "true", "yes", "y"}
+
+        # —— 無向去重：把 (A,B) 與 (B,A) 視為同一條（同 relation）——
+        self._dedup_undirected: bool = str(os.getenv(
+            "DEDUP_UNDIRECTED_PAIR", "1")).lower() in {"1", "true", "yes", "y"}
+
+    # 以無向鍵做去重（relation 一起納入，避免不同關係被錯殺）
+    @staticmethod
+    def _undirected_key(head: str, relation: str, tail: str) -> tuple[str, str, str]:
+        h = (head or "").strip()
+        r = (relation or "").strip()
+        t = (tail or "").strip()
+        if h <= t:
+            return (h, r, t)
+        else:
+            return (t, r, h)
 
     # ====== 檢索：六欄位一致查詢（含同義展開與 props 解包） ======
     @staticmethod
@@ -478,21 +506,54 @@ class CsvPropertyGraphRetriever:
         self._maybe_load_alias_rules()
 
         h_q0 = self._normalize_text(triple.get("head") or triple.get("h"))
-        r_q0 = self._normalize_text(triple.get(
-            "relation") or triple.get("rel") or triple.get("r"))
+        r_q0 = self._normalize_text(triple.get("relation") or triple.get("rel") or triple.get("r"))
         t_q0 = self._normalize_text(triple.get("tail") or triple.get("t"))
+
+        # —— Org-seed 偵測：只有 head 或只有 tail（relation 空），啟用無向 OR —— 
+        org_seed = False
+        if self._org_seed_mode == "UNDIRECTED" and not r_q0:
+            if (bool(h_q0) ^ bool(t_q0)):  # 僅一邊有值
+                org_val = h_q0 or t_q0
+                # 提升為多欄 OR：讓 h/r/t 都以 org_val 查找（1-of-3）
+                h_q0 = org_val
+                r_q0 = org_val
+                t_q0 = org_val
+                org_seed = True
 
         # ① 每次查詢：以本次 (h,r,t) 語境即時擴充 relation.hints 並寫回 alias（無排程）
         if self._llm_runtime_enable:
             self._refresh_relation_hints_for_query([h_q0, r_q0, t_q0])
 
         # ② alias 展開（map/regex/contains/aliases）
-        h_alts = self._expand_query_terms(
-            "head", h_q0) or ([h_q0] if h_q0 else [])
-        r_alts = self._expand_query_terms(
-            "relation", r_q0) or ([r_q0] if r_q0 else [])
-        t_alts = self._expand_query_terms(
-            "tail", t_q0) or ([t_q0] if t_q0 else [])
+        h_alts = self._expand_query_terms("head", h_q0) or ([h_q0] if h_q0 else [])
+        r_alts = self._expand_query_terms("relation", r_q0) or ([r_q0] if r_q0 else [])
+        t_alts = self._expand_query_terms("tail", t_q0) or ([t_q0] if t_q0 else [])
+        
+        # Org-seed：確保三欄都有值（上面已在 q0 階段覆蓋），這裡純保險
+        if org_seed:
+            if not r_alts and h_alts:
+                r_alts = list(h_alts)
+            if not t_alts and h_alts:
+                t_alts = list(h_alts)
+                
+        # —— 只在「機構保底種子」時，關閉 relation 欄位匹配（避免 evidence/props 的關鍵字誤收）——
+        #   可用環境變數 ORG_SEED_USE_REL 控制（預設 0=關閉）
+        org_seed_use_rel = str(os.getenv("ORG_SEED_USE_REL", "0")).lower() in {"1","true","yes","y"}
+        if org_seed and not org_seed_use_rel:
+            r_alts = []  # 關掉 relation 欄位的查詢（含 props 命中路徑）
+                
+        # 無向去重用的已見集合（只在本次 search_triple 作用）
+        seen_undir: set[tuple[str, str, str]] = set()
+
+        # 【動態決定 min_should 閥值】
+        # 判斷查詢的豐富度：計算 head, relation, tail 中有多少個是非空的
+        query_component_count = sum(1 for q in [h_q0, r_q0, t_q0] if q)
+
+        # 如果查詢包含 2 個或更多組件，使用嚴格模式；否則使用寬鬆模式
+        final_min_should = self._min_should_strict if query_component_count >= 2 else self._min_should_loose
+        # Org-seed（無向 OR）強制使用 1-of-3 命中門檻
+        if org_seed:
+            final_min_should = max(1, int(self._org_seed_min_should))
 
         # ③ 即時 LLM 擴充：若 alias 不足（每欄位候選太少），再補一輪（完全依賴 GPT 標注/Fallback）
         if self._llm_runtime_enable and (len(h_alts) <= 1 or len(r_alts) <= 1 or len(t_alts) <= 1):
@@ -538,7 +599,8 @@ class CsvPropertyGraphRetriever:
                         rel_ok = True
                         rel_hits.append(rq)
             else:
-                rel_ok = True  # 通配
+                # 機構種子且關閉 relation 使用時，通配不可自動通過
+                rel_ok = False if (org_seed and not org_seed_use_rel) else True
 
             # --- tail: ---
             if t_alts:
@@ -566,7 +628,7 @@ class CsvPropertyGraphRetriever:
                 or ("事件" in (e.tail or ""))
                 or ("事件" in str(e.tail_props))
             )
-            base_pass = (cond_sum >= max(1, self._min_should)) and (
+            base_pass = (cond_sum >= max(1, final_min_should)) and (
                 (not self._require_entity) or (head_ok or tail_ok))
             event_pivot_pass = (
                 self._event_pivot and tail_looks_event and tail_ok and rel_ok)
@@ -575,7 +637,9 @@ class CsvPropertyGraphRetriever:
 
             # 倒置（H↔T）容忍
             invert_pass = False
-            if (not passed) and self._allow_invert and (h_alts and t_alts):
+            # 一般三元組遵循 LI_PG_ALLOW_INVERT；機構種子依 ORG_SEED_ALLOW_INVERT（預設關）
+            do_invert = self._allow_invert and (not org_seed or self._org_seed_allow_invert)
+            if (not passed) and do_invert and (h_alts and t_alts):
                 if self._invert_strict:
                     head_ok_inv = any(self._contains(e.head, tq)
                                       for tq in t_alts)  # 倒置只看名稱
@@ -586,9 +650,10 @@ class CsvPropertyGraphRetriever:
                         e.head_props, tq) for tq in t_alts)
                     tail_ok_inv = any(self._contains(e.tail, hq) or self._any_value_contains(
                         e.tail_props, hq) for hq in h_alts)
+                    
                 cond_sum_inv = int(bool(head_ok_inv)) + \
                     int(bool(rel_ok)) + int(bool(tail_ok_inv))
-                invert_pass = (cond_sum_inv >= max(1, self._min_should)) and (
+                invert_pass = (cond_sum_inv >= max(1, final_min_should)) and (
                     (not self._require_entity) or (head_ok_inv or tail_ok_inv))
                 passed = passed or invert_pass
 
@@ -604,9 +669,11 @@ class CsvPropertyGraphRetriever:
                     "_debug": {
                         "cond_sum": cond_sum,
                         "event_pivot": bool(event_pivot_pass),
-                        "used_min_should": self._min_should,
+                        "used_min_should": final_min_should,
                         "require_entity": self._require_entity,
                         "allow_invert": self._allow_invert,
+                        "org_seed": bool(org_seed),
+                        "org_seed_use_rel": bool(org_seed_use_rel),
                         "base_pass": bool(base_pass_flag),
                         "invert_pass": bool(invert_pass),
                         "head_ok": bool(head_ok),
